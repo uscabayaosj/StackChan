@@ -78,6 +78,15 @@ describe('createAppServer', () => {
     a.close(); b.close();
   });
 
+  it('closes a connection with 1011 when per-connection setup throws, and keeps serving', async () => {
+    const port = await start(() => { throw new Error('boom'); });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, { headers: { Authorization: 'Bearer tok', 'Device-Id': 'aa:09' } });
+    const closed = await new Promise<{ code: number; reason: string }>(r => ws.on('close', (code, reason) => r({ code, reason: reason.toString() })));
+    expect(closed.code).toBe(1011);
+    expect(closed.reason).toBe('server setup failed');
+    expect(await postOta(port)).toBe(200);
+  });
+
   it('rejects a websocket with a wrong bearer token (401)', async () => {
     const port = await start();
     const bad = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, { headers: { Authorization: 'Bearer nope' } });

@@ -31,6 +31,8 @@ function historyFor(deviceId: string): ChatMessage[] {
   return h;
 }
 
+const sharedLog = (m: string): void => console.log(`[session] ${m}`);
+
 /** Build session deps. The Opus codec is stateful per stream, so pass a codec owned by one connection. */
 export function createDeps(cfg: Config, codec: OpusCodec = createCodec()): SessionDeps {
   return {
@@ -41,7 +43,7 @@ export function createDeps(cfg: Config, codec: OpusCodec = createCodec()): Sessi
     synthesize: (text) => synthesizeToFrames(cfg.elevenlabs, text, codec),
     now: () => Date.now(),
     sleep: (ms) => new Promise(r => setTimeout(r, ms)),
-    log: (m) => console.log(`[session] ${m}`),
+    log: sharedLog,
   };
 }
 
@@ -117,7 +119,6 @@ export function attachWebSocket(
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   });
   wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-    const deps = sharedDeps ?? createDeps(cfg, codecFactory());
     const deviceId = String(req.headers['device-id'] ?? 'unknown');
     const sock: SessionSocket = {
       sendText: j => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(j)); },
@@ -125,8 +126,19 @@ export function attachWebSocket(
       close: () => ws.close(),
       get isOpen() { return ws.readyState === ws.OPEN; },
     };
-    const history = historyFor(deviceId);
-    const session = new Session(sock, deps, deviceId, history);
+    // Attach first so an early socket error can never be an unhandled 'error' event.
+    ws.on('error', err => sharedLog(`socket error ${err.message}`));
+    let deps: SessionDeps;
+    let session: Session;
+    try {
+      // Codec creation can throw (e.g. the opus wasm missing from a bundle); that must only cost this socket.
+      deps = sharedDeps ?? createDeps(cfg, codecFactory());
+      session = new Session(sock, deps, deviceId, historyFor(deviceId));
+    } catch (err) {
+      sharedLog(`setup failed for ${deviceId}: ${err instanceof Error ? err.message : String(err)}`);
+      try { ws.close(1011, 'server setup failed'); } catch { /* socket already gone */ }
+      return;
+    }
     deps.log(`connected ${deviceId}`);
     const timer = setInterval(() => session.tick(), 1000);
     ws.on('message', (data, isBinary) => {
@@ -134,7 +146,6 @@ export function attachWebSocket(
       else void session.handleText(data.toString());
     });
     ws.on('close', () => { clearInterval(timer); session.dispose(); deps.log(`closed ${deviceId}`); });
-    ws.on('error', err => deps.log(`socket error ${err.message}`));
   });
   return wss;
 }
