@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" width="320" height="240">
+<!-- Saoirse face, approved 2026-10-27. Static parts render to the base PNG; eyes/lids/mouth are LVGL objects. -->
+<g id="saoirse">
+      <!-- wall -->
+      <rect width="320" height="240" fill="#EFE6DA"/>
+      <!-- body fluff -->
+      <ellipse cx="160" cy="262" rx="150" ry="70" fill="#FBF7F0"/>
+      <!-- ears -->
+      <path d="M42 96 L58 10 L128 62 Q90 96 42 96 Z" fill="#4A3C36"/>
+      <path d="M56 86 L66 32 L112 66 Q86 86 56 86 Z" fill="#E9D9CB"/>
+      <path d="M278 96 L262 10 L192 62 Q230 96 278 96 Z" fill="#4A3C36"/>
+      <path d="M264 86 L254 32 L208 66 Q234 86 264 86 Z" fill="#E9D9CB"/>
+      <!-- head -->
+      <path d="M44 150 C40 90 90 56 160 58 C230 56 280 90 276 150 C272 200 230 236 160 236 C90 236 48 200 44 150 Z" fill="#F6EEE2"/>
+      <!-- soft seal mask -->
+      <ellipse cx="160" cy="150" rx="92" ry="64" fill="#A89A8E" opacity="0.45"/>
+      <ellipse cx="104" cy="146" rx="42" ry="34" fill="#8E7D72" opacity="0.45"/>
+      <ellipse cx="190" cy="146" rx="42" ry="34" fill="#8E7D72" opacity="0.45"/>
+      <!-- forehead stripe down to the nose -->
+      <path d="M150 66 L170 66 L178 150 Q160 160 142 150 Z" fill="#5A4B44" opacity="0.8"/>
+      <!-- cheek fluff highlights -->
+      <ellipse cx="78" cy="196" rx="30" ry="22" fill="#FBF6EE" opacity="0.9"/>
+      <ellipse cx="242" cy="196" rx="30" ry="22" fill="#FBF6EE" opacity="0.9"/>
+      <!-- blush -->
+      <ellipse cx="74" cy="178" rx="16" ry="8" fill="#F2B3C0" opacity="0.55"/>
+      <ellipse cx="246" cy="178" rx="16" ry="8" fill="#F2B3C0" opacity="0.55"/>
+      <!-- whiskers -->
+      <g stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" opacity="0.9">
+        <line x1="118" y1="186" x2="22" y2="168"/><line x1="118" y1="194" x2="18" y2="196"/><line x1="120" y1="202" x2="30" y2="222"/>
+        <line x1="202" y1="186" x2="298" y2="168"/><line x1="202" y1="194" x2="302" y2="196"/><line x1="200" y1="202" x2="290" y2="222"/>
+      </g>
+      <!-- eyes -->
+      <circle cx="104" cy="142" r="31" fill="#3A302C"/><circle cx="186" cy="142" r="31" fill="#3A302C"/>
+      <circle cx="104" cy="142" r="28" fill="#A9CCE6"/><circle cx="186" cy="142" r="28" fill="#A9CCE6"/>
+      <circle cx="104" cy="146" r="22" fill="#8FB8D8" opacity="0.6"/><circle cx="186" cy="146" r="22" fill="#8FB8D8" opacity="0.6"/>
+      <circle cx="104" cy="144" r="13" fill="#1B1716"/><circle cx="186" cy="144" r="13" fill="#1B1716"/>
+      <circle cx="95" cy="132" r="8" fill="#fff"/><circle cx="177" cy="132" r="8" fill="#fff"/>
+      <circle cx="112" cy="151" r="4" fill="#fff"/><circle cx="194" cy="151" r="4" fill="#fff"/>
+      <!-- nose patch, smudge, nose -->
+      <ellipse cx="153" cy="178" rx="17" ry="13" fill="#1C1614"/>
+      <ellipse cx="137" cy="171" rx="7" ry="5" fill="#D8A05C"/>
+      <path d="M146 176 q7 -5 14 0 q-3 7 -7 7 q-4 0 -7 -7 z" fill="#4A3C38"/>
+      <!-- side pout -->
+      <path d="M146 200 q8 6 16 2 q6 -2 10 6" stroke="#3A302C" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <ellipse cx="168" cy="207" rx="7" ry="3.5" fill="#D9A3A3" opacity="0.85"/>
+      <!-- collar + bell -->
+      <path d="M70 228 Q160 214 250 228 L250 240 L70 240 Z" fill="#F2A7BF"/>
+      <circle cx="160" cy="231" r="9" fill="#E8CFE3"/><line x1="152" y1="233" x2="168" y2="233" stroke="#9C7F96" stroke-width="2"/>
+    </g>
+</svg>
