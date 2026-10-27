@@ -19,6 +19,13 @@ private:
     int idle_expression_modifier_id_    = -1;
     int blink_modifier_id_              = -1;
     bool is_sleeping_                   = false;
+    int neon_flash_modifier_id_         = -1;
+    /** Colour both neon light bars show for the current state (listening green, speaking blue, off). */
+    uint8_t state_light_[3]             = {0, 0, 0};
+
+    void SetStateLight(uint8_t r, uint8_t g, uint8_t b);
+    void ApplyStateLight();
+    void StartHappyFlash();
     uint8_t idle_motion_level_          = 2;
 
     lv_obj_t* preview_image_                         = nullptr;

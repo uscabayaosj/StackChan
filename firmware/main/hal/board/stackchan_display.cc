@@ -336,8 +336,10 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
         avatar.setEmotion(Emotion::Neutral);
     } else if (strcmp(emotion, "happy") == 0) {
         avatar.setEmotion(Emotion::Happy);
+        StartHappyFlash();
     } else if (strcmp(emotion, "laughing") == 0) {
         avatar.setEmotion(Emotion::Happy);
+        StartHappyFlash();
     } else if (strcmp(emotion, "angry") == 0) {
         avatar.setEmotion(Emotion::Angry);
     } else if (strcmp(emotion, "sad") == 0) {
@@ -502,8 +504,7 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
-        GetHAL().setRgbColor(0, 0, 50, 0);
-        GetHAL().refreshRgb();
+        SetStateLight(0, 50, 0);
 
     } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
         _is_xiaozhi_ready = true;
@@ -517,16 +518,14 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
 
         is_idle = true;
 
-        GetHAL().setRgbColor(0, 0, 0, 0);
-        GetHAL().refreshRgb();
+        SetStateLight(0, 0, 0);
 
     } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
         if (speaking_modifier_id_ < 0) {
             speaking_modifier_id_ = stackchan.addModifier(std::make_unique<SpeakingModifier>(0, 180, false));
         }
 
-        GetHAL().setRgbColor(0, 0, 0, 50);
-        GetHAL().refreshRgb();
+        SetStateLight(0, 0, 50);
     } else {
         avatar.setSpeech(status);
     }
@@ -565,6 +564,37 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     if (is_sleeping_) {
         avatar.setSpeech("");
     }
+}
+
+// Both light bars (left LEDs 0-5, right 6-11) follow the conversation state, with the
+// neon lights' own fade. Stock firmware lit only LED 0.
+void StackChanAvatarDisplay::SetStateLight(uint8_t r, uint8_t g, uint8_t b)
+{
+    state_light_[0] = r;
+    state_light_[1] = g;
+    state_light_[2] = b;
+    ApplyStateLight();
+}
+
+void StackChanAvatarDisplay::ApplyStateLight()
+{
+    auto& stackchan = GetStackChan();
+    stackchan.leftNeonLight().setDuration(0.3f);
+    stackchan.rightNeonLight().setDuration(0.3f);
+    stackchan.leftNeonLight().setColor(state_light_[0], state_light_[1], state_light_[2]);
+    stackchan.rightNeonLight().setColor(state_light_[0], state_light_[1], state_light_[2]);
+}
+
+// A happy emotion flashes the bars pink, gold, mint, pink, then returns to the state colour.
+void StackChanAvatarDisplay::StartHappyFlash()
+{
+    auto& stackchan = GetStackChan();
+    if (neon_flash_modifier_id_ >= 0 && stackchan.getModifier(neon_flash_modifier_id_)) {
+        stackchan.removeModifier(neon_flash_modifier_id_);
+    }
+    std::vector<NeonFlashModifier::Rgb> colors = {{90, 0, 45}, {90, 60, 0}, {0, 80, 45}, {90, 0, 45}};
+    neon_flash_modifier_id_ = stackchan.addModifier(
+        std::make_unique<NeonFlashModifier>(std::move(colors), 180, [this]() { ApplyStateLight(); }));
 }
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)
