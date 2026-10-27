@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Screen is 320×240; the avatar panel is 320×240 centred on `lv_screen_active()`.
-- Eye centres (104,142) and (186,142); eye box 74×74 at (67,105) and (149,105); mouth box 60×40 at (130,186). These come from the approved SVG and must match the rendered base PNG.
+- Eye centres (104,142) and (186,142); eye box **66×66** at (71,109) and (153,109), drawn as a circle (`LV_RADIUS_CIRCLE`) with `lv_obj_set_style_clip_corner(box, true, 0)` so children are clipped to the disc; mouth box 60×40 at (130,186). These come from the approved SVG and must match the rendered base PNG. The socket discs in the base are uniform only within r≤33 (the nose patch and ginger smudge overpaint the rim beyond that), which is why the box is 66 and circular.
 - Socket/lid colour `#B4A69B` (the base PNG paints a uniform disc of this colour under each eye so blinks are seamless).
 - Weight semantics (from `Feature`): eyes 100 = open, 0 = closed; mouth 0 = closed, 100 = fully open. `setRotation` receives tenths of a degree and may be negative (the stock skin passes −400); LVGL expects 0..3600.
 - Every firmware task ends with `idf.py build` succeeding and a commit on branch `saoirse` in `~/Developer/StackChan`.
@@ -413,12 +413,12 @@ namespace stackchan::avatar {
 
 namespace saoirse {
 // Geometry (must match firmware/tools/saoirse/saoirse.svg and render_face.py)
-constexpr int kEyeBox      = 74;   // eye container size
-constexpr int kEyeLeftX    = 67;   // top-left of the left eye box
-constexpr int kEyeRightX   = 149;
-constexpr int kEyeY        = 105;
-constexpr int kGazeRange   = 6;    // px of iris travel for gaze = ±100
-constexpr int kLidWidth    = 110;  // wider than the box so a tilted lid still covers it
+constexpr int kEyeBox      = 66;   // eye container size (circular, corner-clipped)
+constexpr int kEyeLeftX    = 71;   // top-left of the left eye box
+constexpr int kEyeRightX   = 153;
+constexpr int kEyeY        = 109;
+constexpr int kGazeRange   = 4;    // px of iris travel for gaze = ±100
+constexpr int kLidWidth    = 100;  // wider than the box so a tilted lid still covers it
 constexpr int kMouthX      = 130, kMouthY = 186, kMouthW = 60, kMouthH = 40;
 constexpr int kMouthOpenThreshold = 30;
 // Colours
@@ -536,6 +536,13 @@ std::unique_ptr<Container> make_circle(lv_obj_t* parent, int diameter, uint32_t 
     return c;
 }
 
+// The arc PNGs were cropped from the full canvas at x = 67 (left) / 149 (right), 74 px wide;
+// the circular box starts 4 px further right, so shift them back by 4.
+int kEyeLeftX_or_RightX(bool isLeftEye)
+{
+    return isLeftEye ? kEyeLeftX : kEyeRightX;
+}
+
 int wrap_rotation(int tenths)
 {
     tenths %= 3600;
@@ -552,7 +559,8 @@ SaoirseEyes::SaoirseEyes(lv_obj_t* parent, bool isLeftEye) : _is_left_eye(isLeft
     _box->setAlign(LV_ALIGN_TOP_LEFT);
     _box->setPos(isLeftEye ? kEyeLeftX : kEyeRightX, kEyeY);
     _box->setSize(kEyeBox, kEyeBox);
-    _box->setRadius(0);
+    _box->setRadius(LV_RADIUS_CIRCLE);  // the socket is a disc: clip lids and gaze to it
+    lv_obj_set_style_clip_corner(_box->get(), true, 0);
     _box->setBorderWidth(0);
     _box->setBgOpa(LV_OPA_TRANSP);
     _box->setPadding(0, 0, 0, 0);
@@ -569,12 +577,12 @@ SaoirseEyes::SaoirseEyes(lv_obj_t* parent, bool isLeftEye) : _is_left_eye(isLeft
     _gaze->setPadding(0, 0, 0, 0);
     _gaze->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-    _rim    = make_circle(_gaze->get(), 62, kRim, 0, 0);
-    _iris   = make_circle(_gaze->get(), 56, kIris, 0, 0);
-    _shade  = make_circle(_gaze->get(), 44, kShade, 0, 4, LV_OPA_60);
-    _pupil  = make_circle(_gaze->get(), 26, kPupil, 0, 2);
-    _glint1 = make_circle(_gaze->get(), 16, 0xFFFFFF, -9, -10);
-    _glint2 = make_circle(_gaze->get(), 8, 0xFFFFFF, 8, 7);
+    _rim    = make_circle(_gaze->get(), 58, kRim, 0, 0);
+    _iris   = make_circle(_gaze->get(), 52, kIris, 0, 0);
+    _shade  = make_circle(_gaze->get(), 40, kShade, 0, 4, LV_OPA_60);
+    _pupil  = make_circle(_gaze->get(), 24, kPupil, 0, 2);
+    _glint1 = make_circle(_gaze->get(), 14, 0xFFFFFF, -8, -9);
+    _glint2 = make_circle(_gaze->get(), 8, 0xFFFFFF, 7, 7);
 
     // Lid: socket-coloured, pivots at its bottom centre so it can tilt for emotions.
     _lid = std::make_unique<Container>(_box->get());
@@ -594,11 +602,11 @@ SaoirseEyes::SaoirseEyes(lv_obj_t* parent, bool isLeftEye) : _is_left_eye(isLeft
     _happy = std::make_unique<Image>(_box->get());
     _happy->setSrc(&_happy_dsc);
     _happy->setAlign(LV_ALIGN_TOP_LEFT);
-    _happy->setPos(0, 118 - kEyeY);
+    _happy->setPos(67 - kEyeLeftX_or_RightX(isLeftEye), 118 - kEyeY);
     _sleepy = std::make_unique<Image>(_box->get());
     _sleepy->setSrc(&_sleepy_dsc);
     _sleepy->setAlign(LV_ALIGN_TOP_LEFT);
-    _sleepy->setPos(0, 124 - kEyeY);
+    _sleepy->setPos(67 - kEyeLeftX_or_RightX(isLeftEye), 124 - kEyeY);
     showArc(false, false);
 
     setSize(0);
@@ -689,7 +697,7 @@ void SaoirseEyes::setSize(int size)
 {
     Feature::setSize(size);
     // -100..100 -> pupil 18..34 px: wide pupils when excited, pinned when annoyed.
-    const int pupil = map_range(_size, -100, 100, 18, 34);
+    const int pupil = map_range(_size, -100, 100, 16, 30);
     _pupil->setSize(pupil, pupil);
 }
 ```
