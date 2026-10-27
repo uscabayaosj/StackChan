@@ -102,11 +102,11 @@ export class Session {
    * arrives while we are already listening (wake word heard while listening). Not the one after a
    * reply that played out.
    */
-  private guardNextListen = true;
+  private guardNextListen = false;
   /** A `listen start` has been applied for the current listening period. */
   private listenStarted = false;
-  /** A `listen start` that arrived mid-turn, applied when the turn ends. */
-  private listenPending: { afterWake: boolean } | null = null;
+  /** A `listen start` that arrived mid-turn, applied (with its own arrival time) when the turn ends. */
+  private listenPending: { afterWake: boolean; at: number } | null = null;
   private abortRequested = false;
   /** Cancels the in-flight turn's STT/LLM/TTS calls. */
   private turnAbort: AbortController | null = null;
@@ -151,11 +151,10 @@ export class Session {
     this.mcp.dispose();
   }
 
-  private requestAbort(): void {
+  private requestAbort(chimeFollows = false): void {
     this.abortRequested = true;
     this.turnAbort?.abort();
-    // A barge-in makes the robot chime when it starts listening again.
-    this.guardNextListen = true;
+    if (chimeFollows) this.guardNextListen = true;
   }
 
   /** Called periodically (every second) by the transport. */
@@ -194,16 +193,19 @@ export class Session {
           if (this.state === 'idle' || this.state === 'listening') { this.state = 'listening'; this.resetCapture(); }
         } else if (msg.state === 'start') {
           const now = this.deps.now();
-          const afterWake = this.guardNextListen || now - this.wakeDetectedAt < 5_000 || (this.state === 'listening' && this.listenStarted);
+          // Chime cases: after `listen detect`, after a wake-word barge-in, or a second start in one listening
+          // period (wake word heard while listening). A tap on the face starts listening without a chime.
+          const afterWake = this.guardNextListen || (this.state === 'listening' && this.listenStarted);
           this.listenStarted = true;
-          if (this.state === 'idle' || this.state === 'listening') this.startListening(afterWake);
-          else this.listenPending = { afterWake }; // mid-turn (e.g. right after a barge-in): applied when the turn unwinds
+          if (this.state === 'idle' || this.state === 'listening') this.startListening(afterWake, now);
+          else this.listenPending = { afterWake, at: now }; // mid-turn (right after a barge-in): applied when the turn unwinds
         } else if (msg.state === 'stop') {
           if (this.state === 'listening' && this.pcmChunks.length > 0) this.startProcessing();
         }
         break;
       case 'abort':
-        this.requestAbort();
+        // Only a wake-word barge-in makes the robot chime when it listens again; a tap does not.
+        this.requestAbort(msg.reason === 'wake_word_detected');
         break;
       case 'mcp':
         this.mcp.handle(msg.payload);
@@ -240,12 +242,12 @@ export class Session {
     else if (ev === 'too-short') this.resetCapture();
   }
 
-  private startListening(afterWake = false): void {
+  private startListening(afterWake = false, at = this.deps.now()): void {
     this.state = 'listening';
-    const now = this.deps.now();
     this.guardNextListen = false;
     // After a wake word the robot plays its popup chime into an open microphone; don't transcribe it.
-    this.listenGuardUntil = afterWake ? now + this.deps.config.wakeGuardMs : -Infinity;
+    // `at` is when the robot said it started listening (a queued start keeps its arrival time).
+    this.listenGuardUntil = afterWake ? at + this.deps.config.wakeGuardMs : -Infinity;
     this.deps.log(`listening (mode=${this.mode}${afterWake ? `, wake guard ${this.deps.config.wakeGuardMs} ms` : ''})`);
     this.resetCapture();
   }
@@ -279,7 +281,7 @@ export class Session {
       if (this.disposed || this.state === 'idle') return;
       const pending = this.listenPending;
       this.listenPending = null;
-      if (pending) { this.listenStarted = true; this.startListening(pending.afterWake); }
+      if (pending) { this.listenStarted = true; this.startListening(pending.afterWake, pending.at); }
       else this.state = 'listening';
     });
   }
@@ -399,7 +401,7 @@ export class Session {
         for (const r of results) working.push({ role: 'tool', tool_call_id: r.id, content: r.text });
       }
       if (!this.abortRequested) {
-        if (calls) { await speak(LOOP_FILLER); full += ` ${LOOP_FILLER}`; }
+        if (calls) { await flushText(); await speak(LOOP_FILLER); full += ` ${LOOP_FILLER}`; }
         else await flushText();
         completed = !this.abortRequested;
       }

@@ -71,9 +71,15 @@ describe('loadConfig', () => {
   it('throws on an unknown DEVICE_TZ', () => {
     expect(() => loadConfig({ ...base, DEVICE_TZ: 'Mars/Olympus' })).toThrow(/DEVICE_TZ/);
   });
-  it('requires SAOIRSE_DEVICE_TOKEN on Vercel', () => {
-    expect(() => loadConfig({ ...base, VERCEL: '1', SAOIRSE_DEVICE_TOKEN: '' })).toThrow(/SAOIRSE_DEVICE_TOKEN/);
-    expect(loadConfig({ ...base, VERCEL: '1' }).deviceToken).toBe('t');
+  it('requires SAOIRSE_DEVICE_TOKEN and OTA_SECRET on Vercel', () => {
+    expect(() => loadConfig({ ...base, VERCEL: '1', SAOIRSE_DEVICE_TOKEN: '', OTA_SECRET: 's' })).toThrow(/SAOIRSE_DEVICE_TOKEN/);
+    expect(() => loadConfig({ ...base, VERCEL: '1' })).toThrow(/OTA_SECRET/);
+    const c = loadConfig({ ...base, VERCEL: '1', OTA_SECRET: 's' });
+    expect(c.deviceToken).toBe('t');
+    expect(c.otaSecret).toBe('s');
+  });
+  it('allows an empty OTA secret locally (check off)', () => {
+    expect(loadConfig(base).otaSecret).toBe('');
   });
   it('allows an empty device token locally (auth off)', () => {
     expect(loadConfig({ ...base, SAOIRSE_DEVICE_TOKEN: '' }).deviceToken).toBe('');
@@ -85,7 +91,7 @@ describe('loadConfig', () => {
 
 describe('vision url and tools', () => {
   it('derives the vision upload url from the public ws url', () => {
-    expect(deriveVisionUrl('wss://saoirse-server.vercel.app/api/ws')).toBe('https://saoirse-server.vercel.app/api/vision');
+    expect(deriveVisionUrl('wss://saoirse.example/api/ws')).toBe('https://saoirse.example/api/vision');
     expect(deriveVisionUrl('ws://192.168.1.10:8765/api/ws')).toBe('http://192.168.1.10:8765/api/vision');
     expect(deriveVisionUrl('wss://h.example/')).toBe('https://h.example/api/vision');
   });

@@ -33,50 +33,65 @@ const listenStart = JSON.stringify({ type: 'listen', state: 'start', mode: 'auto
 function utter(s: Session, env: ReturnType<typeof makeEnv>) { for (let i = 0; i < 4; i++) s.handleBinary(env.speech); for (let i = 0; i < 5; i++) s.handleBinary(env.silence); }
 const stts = (env: ReturnType<typeof makeEnv>) => env.sent.filter(m => m.type === 'stt').length;
 
-describe('wake guard without listen detect (CONFIG_SEND_WAKE_WORD_DATA=n)', () => {
-  it('arms on the first listen start after hello, not on the one after a reply, and again when a start arrives while listening', async () => {
+describe('wake guard', () => {
+  const detect = JSON.stringify({ type: 'listen', state: 'detect', text: 'Hi,Stack Chan' });
+  const wakeAbort = JSON.stringify({ type: 'abort', reason: 'wake_word_detected' });
+  const tapAbort = JSON.stringify({ type: 'abort' });
+
+  it('arms after detect + start, not on the start after a reply, and again on a second start in one listening period', async () => {
     const env = makeEnv();
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await s.handleText(hello);
+    await s.handleText(detect);
     await s.handleText(listenStart);
     expect(env.logs.at(-1)).toBe('listening (mode=auto, wake guard 800 ms)');
     utter(s, env); await s.drain();            // inside the guard: the chime, nothing heard
     expect(stts(env)).toBe(0);
     env.advance(900);
-    utter(s, env); await s.drain();            // a real utterance: turn 1
+    utter(s, env); await s.drain();            // a real utterance: turn 1 (short: ends well inside 5 s of the wake word)
     expect(stts(env)).toBe(1);
     await s.handleText(listenStart);           // the robot re-enters listening after tts stop: no chime, no guard
     expect(env.logs.at(-1)).toBe('listening (mode=auto)');
     env.advance(300);                          // past the echo guard
     utter(s, env); await s.drain();
     expect(stts(env)).toBe(2);
-    await s.handleText(listenStart);           // post-reply start again (no guard) ...
+    await s.handleText(listenStart);           // post-reply start (no guard) ...
     expect(env.logs.at(-1)).toBe('listening (mode=auto)');
-    await s.handleText(listenStart);           // ... then a second start in the same listening period: wake word heard while listening, the robot chimes
+    await s.handleText(listenStart);           // ... then a second start in the same period: wake word heard while listening, the robot chimes
     expect(env.logs.at(-1)).toBe('listening (mode=auto, wake guard 800 ms)');
-    utter(s, env); await s.drain();
-    expect(stts(env)).toBe(2);
-    env.advance(900);
-    utter(s, env); await s.drain();
-    expect(stts(env)).toBe(3);
   });
 
-  it('a listen start arriving mid-turn (barge-in) is applied when the turn unwinds, with the guard', async () => {
+  it('a tap on the face (listen start with no detect, abort with no reason) never arms the guard', async () => {
     const env = makeEnv();
     let s!: Session;
+    env.deps.synthesize = async function* () { yield Buffer.from([9, 1]); await s.handleText(tapAbort); await s.handleText(listenStart); yield Buffer.from([9, 2]); };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(listenStart);           // tapped: no chime
+    expect(env.logs.at(-1)).toBe('listening (mode=auto)');
+    utter(s, env); await s.drain();            // heard at once
+    expect(stts(env)).toBe(1);
+    expect(env.logs.at(-1)).toBe('listening (mode=auto)'); // the start queued during the tap-abort: still no guard
+  });
+
+  it('a wake-word barge-in queues the listen start and arms the guard from the start\'s arrival time', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    let startAt = -1;
     env.deps.synthesize = async function* () {
       yield Buffer.from([9, 1]);
-      await s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' }));
-      await s.handleText(listenStart);       // the robot is already listening again while we unwind
+      await s.handleText(wakeAbort);
+      startAt = env.deps.now();
+      await s.handleText(listenStart);         // the robot is already listening again while we unwind
       yield Buffer.from([9, 2]);
     };
     s = new Session(env.socket, env.deps, 'aa:bb');
     await s.handleText(hello);
     await s.handleText(listenStart);
-    env.advance(900);
     utter(s, env); await s.drain();
     expect(env.logs.at(-1)).toBe('listening (mode=auto, wake guard 800 ms)');
-    utter(s, env); await s.drain();           // chime inside the guard
+    expect(startAt).toBeGreaterThanOrEqual(0);
+    utter(s, env); await s.drain();            // chime inside the guard (clock has not moved past startAt + 800)
     expect(stts(env)).toBe(1);
     env.advance(900);
     utter(s, env); await s.drain();

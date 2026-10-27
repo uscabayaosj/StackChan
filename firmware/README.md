@@ -41,3 +41,5 @@ idf.py flash
 - Flash: `. ~/esp/esp-idf/export.sh && idf.py -p /dev/cu.usbmodem<id> flash monitor`.
 
 `OTA_SECRET` is the value you set on the server (`vercel env add OTA_SECRET production`); the robot sends it as the `k` query parameter and the server refuses the OTA check (which hands out the WebSocket token) without it. `CONFIG_SEND_WAKE_WORD_DATA=y` makes the robot announce the wake word (`listen detect`) so the server can skip its popup chime.
+
+After changing `sdkconfig.defaults.local`, delete `sdkconfig` before building (`rm sdkconfig && idf.py build`): ESP-IDF only applies the defaults when generating a new `sdkconfig`. Order matters for the secret: flash the robot with the `?k=` URL first, then set `OTA_SECRET` on the server; a robot without the secret gets 403 on its OTA check and stops retrying until rebooted. The robot's NVS `ota_url` (set by the M5 app) overrides `CONFIG_OTA_URL` if present, and the OTA failure alert shows the URL, secret included, on the screen.

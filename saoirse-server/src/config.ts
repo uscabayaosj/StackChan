@@ -84,6 +84,9 @@ function timeZone(env: NodeJS.ProcessEnv, key: string, dflt: string): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const fallbackKey = env.LLM_FALLBACK_API_KEY;
   const deviceToken = env.SAOIRSE_DEVICE_TOKEN || '';
+  const otaSecret = env.OTA_SECRET || '';
+  // The OTA reply carries the device token: a public deployment must gate it. Flash the robot with the ?k= URL first.
+  if (env.VERCEL && !otaSecret) throw new Error('OTA_SECRET must be set on Vercel (/api/ota hands out the WebSocket token); flash the robot with CONFIG_OTA_URL ...?k=<secret> first');
   // Locally an empty token means "auth off"; a public deployment must never run open.
   if (env.VERCEL && !deviceToken) throw new Error('SAOIRSE_DEVICE_TOKEN must be set on Vercel (an empty token would leave /api/ws open)');
   return {
@@ -111,7 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       sttModel: env.ELEVENLABS_STT_MODEL || 'scribe_v2',
     },
     deviceToken,
-    otaSecret: env.OTA_SECRET || '',
+    otaSecret: otaSecret,
     publicWsUrl: req(env, 'PUBLIC_WS_URL'),
     vad: {
       rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.025),
