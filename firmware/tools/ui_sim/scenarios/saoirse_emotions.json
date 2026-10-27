@@ -1,0 +1,15 @@
+[
+  { "t": 0, "emotion": "neutral", "status": "standby", "disable_blink": true },
+  { "t": 1000, "screenshot": "saoirse_neutral.ppm" },
+  { "t": 1200, "emotion": "happy" },
+  { "t": 2100, "screenshot": "saoirse_happy.ppm" },
+  { "t": 2400, "emotion": "angry" },
+  { "t": 3300, "screenshot": "saoirse_angry.ppm" },
+  { "t": 3600, "emotion": "sad" },
+  { "t": 4500, "screenshot": "saoirse_sad.ppm" },
+  { "t": 4800, "emotion": "doubtful" },
+  { "t": 5700, "screenshot": "saoirse_doubtful.ppm" },
+  { "t": 6000, "emotion": "sleepy" },
+  { "t": 6900, "screenshot": "saoirse_sleepy.ppm" },
+  { "t": 7200, "emotion": "neutral", "clear_chat": true }
+]

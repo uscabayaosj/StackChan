@@ -1,0 +1,9 @@
+[
+  { "t": 0, "emotion": "neutral", "status": "standby", "disable_blink": true },
+  {
+    "t": 500,
+    "chat": { "role": "assistant", "text": "Hello! I'm Saoirse. Shall we write up today's field notes?" },
+    "mouth_weight": 80
+  },
+  { "t": 1500, "screenshot": "saoirse_speech.ppm" }
+]
