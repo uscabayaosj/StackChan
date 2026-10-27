@@ -8,6 +8,8 @@ export class LlmHttpError extends Error {
   }
 }
 
+const NO_CONTENT = 'LLM stream produced no content';
+
 function parseDelta(payload: string): string | undefined {
   try {
     const json = JSON.parse(payload);
@@ -28,8 +30,11 @@ export async function* streamChat(
     model: cfg.model,
     messages,
     stream: true,
-    max_tokens: 200,
+    max_tokens: cfg.maxTokens,
   };
+  if (cfg.reasoningEffort && cfg.reasoningEffort !== 'none') {
+    body.reasoning = { effort: cfg.reasoningEffort, exclude: true };
+  }
   if (cfg.providerOrder && cfg.providerOrder.length > 0) {
     body.provider = { order: cfg.providerOrder, allow_fallbacks: true };
   }
@@ -49,6 +54,7 @@ export async function* streamChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let pending = '';
+  let sawContent = false;
   try {
     while (true) {
       const { value, done } = await reader.read();
@@ -60,9 +66,15 @@ export async function* streamChat(
         pending = pending.slice(nl + 1);
         if (!line.startsWith('data:')) continue;
         const payload = line.slice(5).trim();
-        if (payload === '[DONE]') return;
+        if (payload === '[DONE]') {
+          if (!sawContent) throw new LlmHttpError(502, NO_CONTENT);
+          return;
+        }
         const delta = parseDelta(payload);
-        if (delta) yield delta;
+        if (delta) {
+          sawContent = true;
+          yield delta;
+        }
       }
     }
     // Flush: a last data line may arrive without a trailing newline.
@@ -72,9 +84,13 @@ export async function* streamChat(
       const payload = last.slice(5).trim();
       if (payload !== '[DONE]') {
         const delta = parseDelta(payload);
-        if (delta) yield delta;
+        if (delta) {
+          sawContent = true;
+          yield delta;
+        }
       }
     }
+    if (!sawContent) throw new LlmHttpError(502, NO_CONTENT);
   } finally {
     reader.cancel().catch(() => {});
   }

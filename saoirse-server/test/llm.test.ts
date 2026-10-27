@@ -6,7 +6,10 @@ function sse(lines: string[]): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-const cfg = { baseUrl: 'https://llm.test/v1', apiKey: 'k', model: 'm', providerOrder: ['groq'] };
+const cfg = {
+  baseUrl: 'https://llm.test/v1', apiKey: 'k', model: 'm', providerOrder: ['groq'],
+  maxTokens: 400, reasoningEffort: 'low' as const,
+};
 
 describe('streamChat', () => {
   it('yields content deltas and sends the right request', async () => {
@@ -27,7 +30,19 @@ describe('streamChat', () => {
     expect(body.model).toBe('m');
     expect(body.stream).toBe(true);
     expect(body.provider).toEqual({ order: ['groq'], allow_fallbacks: true });
+    expect(body.max_tokens).toBe(400);
+    expect(body.reasoning).toEqual({ effort: 'low', exclude: true });
     expect(captured.init.headers.Authorization).toBe('Bearer k');
+  });
+  it("omits the reasoning field when reasoningEffort is 'none'", async () => {
+    let body: any;
+    const fetchImpl = (async (_u: string, init: any) => {
+      body = JSON.parse(init.body);
+      return sse([JSON.stringify({ choices: [{ delta: { content: 'ok' } }] }), '[DONE]']);
+    }) as unknown as typeof fetch;
+    for await (const _ of streamChat({ ...cfg, reasoningEffort: 'none' }, [{ role: 'user', content: 'hi' }], fetchImpl)) void _;
+    expect(body).not.toHaveProperty('reasoning');
+    expect(body.max_tokens).toBe(400);
   });
   it('falls back to the second model on a 5xx', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -37,7 +52,7 @@ describe('streamChat', () => {
       if (url.startsWith('https://llm.test')) return new Response('boom', { status: 503 });
       return sse([JSON.stringify({ choices: [{ delta: { content: 'ok' } }] }), '[DONE]']);
     }) as unknown as typeof fetch;
-    const fb = { baseUrl: 'https://fb.test/v1', apiKey: 'f', model: 'fm' };
+    const fb = { baseUrl: 'https://fb.test/v1', apiKey: 'f', model: 'fm', maxTokens: 400 };
     const out: string[] = [];
     for await (const d of streamChatWithFallback(cfg, fb, [{ role: 'user', content: 'hi' }], fetchImpl)) out.push(d);
     expect(out.join('')).toBe('ok');
@@ -47,7 +62,7 @@ describe('streamChat', () => {
   });
 });
 
-const fb = { baseUrl: 'https://fb.test/v1', apiKey: 'f', model: 'fm' };
+const fb = { baseUrl: 'https://fb.test/v1', apiKey: 'f', model: 'fm', maxTokens: 400, reasoningEffort: 'low' as const };
 const msgs = [{ role: 'user' as const, content: 'hi' }];
 const delta = (c: string) => JSON.stringify({ choices: [{ delta: { content: c } }] });
 
@@ -100,7 +115,7 @@ describe('streamChat edge cases', () => {
     let seen: AbortSignal | undefined;
     const fetchImpl = (async (_u: string, init: any) => {
       seen = init.signal;
-      return sse(['[DONE]']);
+      return sse([delta('x'), '[DONE]']);
     }) as unknown as typeof fetch;
     const ac = new AbortController();
     for await (const _ of streamChat(cfg, msgs, fetchImpl, { signal: ac.signal })) void _;
@@ -161,5 +176,49 @@ describe('streamChatWithFallback policy', () => {
     };
     await expect(run()).rejects.toMatchObject({ name: 'AbortError' });
     expect(calls).toEqual(['https://llm.test/v1/chat/completions']);
+  });
+});
+
+describe('reasoning-only streams', () => {
+  const reasoning = (r: string) => JSON.stringify({ choices: [{ delta: { reasoning: r, content: '' } }] });
+
+  it('throws a 502 LlmHttpError when the stream produces no content', async () => {
+    const fetchImpl = (async () => sse([reasoning('thinking'), reasoning('more'), '[DONE]'])) as unknown as typeof fetch;
+    const run = async () => {
+      for await (const _ of streamChat(cfg, msgs, fetchImpl)) void _;
+    };
+    await expect(run()).rejects.toMatchObject({ status: 502 });
+    await expect(run()).rejects.toThrow('LLM stream produced no content');
+  });
+
+  it('throws the same error when the stream ends without [DONE]', async () => {
+    const fetchImpl = (async () => chunked([`data: ${reasoning('x')}\n\n`])) as unknown as typeof fetch;
+    const run = async () => {
+      for await (const _ of streamChat(cfg, msgs, fetchImpl)) void _;
+    };
+    await expect(run()).rejects.toBeInstanceOf(LlmHttpError);
+  });
+
+  it('rejects when only reasoning arrives and there is no fallback', async () => {
+    const fetchImpl = (async () => sse([reasoning('thinking'), '[DONE]'])) as unknown as typeof fetch;
+    const run = async () => {
+      for await (const _ of streamChatWithFallback(cfg, undefined, msgs, fetchImpl)) void _;
+    };
+    await expect(run()).rejects.toThrow('LLM stream produced no content');
+  });
+
+  it('falls back when the primary stream carries only reasoning deltas', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      if (url.startsWith('https://llm.test')) return sse([reasoning('thinking'), '[DONE]']);
+      return sse([delta('answer'), '[DONE]']);
+    }) as unknown as typeof fetch;
+    const out: string[] = [];
+    for await (const d of streamChatWithFallback(cfg, fb, msgs, fetchImpl)) out.push(d);
+    expect(out).toEqual(['answer']);
+    expect(calls).toEqual(['https://llm.test/v1/chat/completions', 'https://fb.test/v1/chat/completions']);
+    warn.mockRestore();
   });
 });
