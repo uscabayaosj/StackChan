@@ -252,6 +252,45 @@ describe('Session', () => {
     expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'Hi there. Bye.' });
   });
 
+  it('ignores the popup chime: audio in the wake guard after detect + listen start is dropped, later audio is heard', async () => {
+    const env = makeEnv();
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'detect', text: 'Hi,Stack Chan' }));
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    expect(env.logs.at(-1)).toBe('listening (mode=auto, wake guard 800 ms)');
+    utter(s, env); // the chime, inside the guard (clock has not advanced)
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'stt')).toHaveLength(0);
+    env.advance(900);
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'stt')).toHaveLength(1);
+  });
+
+  it('a listen start without a recent wake word has no guard, and logs what it heard', async () => {
+    const env = makeEnv();
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    expect(env.logs.at(-1)).toBe('listening (mode=auto)');
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'stt')).toHaveLength(1);
+    expect(env.logs.some(l => /^utterance \d+ ms, peak rms 0\.\d{3}: "what is the time"$/.test(l))).toBe(true);
+  });
+
+  it('logs an empty transcript with the utterance length and level', async () => {
+    const env = makeEnv();
+    env.deps.transcribe = async () => '';
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.logs.some(l => /^utterance \d+ ms, peak rms 0\.\d{3}: empty transcript$/.test(l))).toBe(true);
+  });
+
   it('accepts audio again once the echo guard expires', async () => {
     const env = makeEnv();
     const s = new Session(env.socket, env.deps, 'aa:bb');
@@ -337,7 +376,7 @@ describe('Session', () => {
     await s.drain();
     expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
-    env.advance(200); // well inside the 1.5 s echo guard
+    env.advance(200); // inside the 250 ms echo guard
     utter(s, env);
     await s.drain();
     expect(env.sent.filter(m => m.type === 'stt')).toHaveLength(2);

@@ -20,7 +20,7 @@ export interface FakeRobotResult {
   replyFrames: number;
 }
 
-const SILENT_FRAMES = 20; // 1.2 s of silence so the server VAD ends the utterance
+const SILENT_FRAMES = 30; // 1.8 s of silence: the server VAD needs 1.2 s, and the decoder's overlap makes the first frame after speech read as speech
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 /** Plays one WAV question at a xiaozhi websocket server like the robot would and records the reply. */

@@ -22,6 +22,8 @@ export interface Config {
   idleCloseMs: number;
   hardCloseMs: number;
   echoGuardMs: number;
+  /** Ignore microphone audio this long after a `listen start` that follows a wake word: the robot plays its popup chime then. */
+  wakeGuardMs: number;
   contextTurns: number;
   /** Per-call deadlines: STT request, the whole LLM stream, and each TTS sentence. */
   sttTimeoutMs: number;
@@ -91,13 +93,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     publicWsUrl: req(env, 'PUBLIC_WS_URL'),
     vad: {
       rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.025),
-      silenceMs: num(env, 'VAD_SILENCE_MS', 800),
+      silenceMs: num(env, 'VAD_SILENCE_MS', 1_200),
       minSpeechMs: num(env, 'VAD_MIN_SPEECH_MS', 300),
       preRollMs: num(env, 'VAD_PREROLL_MS', 300),
     },
     idleCloseMs: num(env, 'IDLE_CLOSE_MS', 60_000),
     hardCloseMs: num(env, 'HARD_CLOSE_MS', 280_000),
-    echoGuardMs: num(env, 'ECHO_GUARD_MS', 1_500),
+    echoGuardMs: num(env, 'ECHO_GUARD_MS', 250),
+    wakeGuardMs: num(env, 'WAKE_GUARD_MS', 800),
     contextTurns: num(env, 'CONTEXT_TURNS', 10),
     sttTimeoutMs: num(env, 'STT_TIMEOUT_MS', 10_000),
     llmTimeoutMs: num(env, 'LLM_TIMEOUT_MS', 15_000),

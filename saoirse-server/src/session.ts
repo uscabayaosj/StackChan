@@ -67,6 +67,12 @@ export class Session {
   private lastSpeechAt: number;
   private startedAt: number;
   private ttsEndedAt = -Infinity;
+  /** When the robot last reported its wake word (`listen detect`). */
+  private wakeDetectedAt = -Infinity;
+  /** Microphone audio is ignored until this time (the robot's popup chime after a wake word). */
+  private listenGuardUntil = -Infinity;
+  /** Loudest frame of the utterance being captured, for the log. */
+  private utterPeakRms = 0;
   private abortRequested = false;
   /** Cancels the in-flight turn's STT/LLM/TTS calls. */
   private turnAbort: AbortController | null = null;
@@ -130,7 +136,10 @@ export class Session {
       case 'listen':
         if (msg.mode === 'auto' || msg.mode === 'manual' || msg.mode === 'realtime') this.mode = msg.mode;
         if (msg.state === 'start' || msg.state === 'detect') {
-          if (this.state === 'idle' || this.state === 'listening') this.startListening();
+          const now = this.deps.now();
+          if (msg.state === 'detect') this.wakeDetectedAt = now;
+          const afterWake = msg.state === 'start' && now - this.wakeDetectedAt < 5_000;
+          if (this.state === 'idle' || this.state === 'listening') this.startListening(afterWake);
         } else if (msg.state === 'stop') {
           if (this.state === 'listening' && this.pcmChunks.length > 0) this.startProcessing();
         }
@@ -150,9 +159,12 @@ export class Session {
     if (this.disposed || this.state !== 'listening') return;
     const now = this.deps.now();
     if (now - this.ttsEndedAt < this.deps.config.echoGuardMs) return;
+    if (now < this.listenGuardUntil) return;
     let pcm: Buffer;
     try { pcm = this.deps.codec.decode(frame); } catch { return; }
-    const ev = this.vad.push(rms(pcm));
+    const level = rms(pcm);
+    if (level > this.utterPeakRms) this.utterPeakRms = level;
+    const ev = this.vad.push(level);
     const capturing = this.pcmChunks.length > 0;
     if (ev === 'speech') {
       if (!capturing) { this.pcmChunks.push(...this.preRoll); this.preRoll = []; }
@@ -170,27 +182,32 @@ export class Session {
     else if (ev === 'too-short') this.resetCapture();
   }
 
-  private startListening(): void {
+  private startListening(afterWake = false): void {
     this.state = 'listening';
-    this.deps.log(`listening (mode=${this.mode})`);
+    const now = this.deps.now();
+    // After a wake word the robot plays its popup chime into an open microphone; don't transcribe it.
+    this.listenGuardUntil = afterWake ? now + this.deps.config.wakeGuardMs : -Infinity;
+    this.deps.log(`listening (mode=${this.mode}${afterWake ? `, wake guard ${this.deps.config.wakeGuardMs} ms` : ''})`);
     this.resetCapture();
   }
 
   private resetCapture(): void {
     this.pcmChunks = [];
     this.preRoll = [];
+    this.utterPeakRms = 0;
     this.vad.reset();
   }
 
   private startProcessing(): void {
     if (this.disposed) return;
     const pcm = Buffer.concat(this.pcmChunks);
+    const stats = { ms: this.pcmChunks.length * FRAME_MS, peak: this.utterPeakRms };
     this.resetCapture();
     this.state = 'processing';
     this.abortRequested = false;
     const turn = new AbortController();
     this.turnAbort = turn;
-    this.running = this.process(pcm, turn.signal).catch(err => {
+    this.running = this.process(pcm, turn.signal, stats).catch(err => {
       const msg = (err as Error).message;
       // A barge-in cancels the turn's fetches on purpose; anything else (incl. timeouts, close) is an error.
       this.deps.log(turn.signal.aborted && !this.disposed ? `turn aborted (${msg})` : `process error: ${msg}`);
@@ -201,10 +218,12 @@ export class Session {
     });
   }
 
-  private async process(pcm: Buffer, signal: AbortSignal): Promise<void> {
+  private async process(pcm: Buffer, signal: AbortSignal, stats: { ms: number; peak: number }): Promise<void> {
     const text = await this.deps.transcribe(pcm, signal);
     if (this.abortRequested || !this.socket.isOpen) return;
-    if (!text) { this.deps.log('empty transcript'); return; }
+    const heard = `utterance ${stats.ms} ms, peak rms ${stats.peak.toFixed(3)}`;
+    if (!text) { this.deps.log(`${heard}: empty transcript`); return; }
+    this.deps.log(`${heard}: "${text}"`);
     this.socket.sendText({ session_id: this.sessionId, type: 'stt', text });
     this.history.push({ role: 'user', content: text });
     this.trimHistory();
