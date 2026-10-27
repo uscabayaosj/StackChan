@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pcmToWav } from '../src/wav.js';
+import { pcmToWav, wavToPcm } from '../src/wav.js';
 import { transcribe } from '../src/stt.js';
 
 describe('pcmToWav', () => {
@@ -12,6 +12,41 @@ describe('pcmToWav', () => {
     expect(wav.readUInt16LE(22)).toBe(1);
     expect(wav.readUInt16LE(34)).toBe(16);
     expect(wav.readUInt32LE(40)).toBe(1920);
+  });
+});
+
+describe('wavToPcm', () => {
+  it('round-trips pcmToWav output', () => {
+    const pcm = Buffer.from(Array.from({ length: 1920 }, (_, i) => (i * 7) & 0xff));
+    const out = wavToPcm(pcmToWav(pcm));
+    expect(out.pcm.equals(pcm)).toBe(true);
+    expect(out.sampleRate).toBe(16000);
+    expect(out.channels).toBe(1);
+  });
+  it('skips an odd-sized padded LIST chunk and tolerates a truncated data chunk', () => {
+    const fmt = Buffer.alloc(24);
+    fmt.write('fmt ', 0, 'ascii');
+    fmt.writeUInt32LE(16, 4);
+    fmt.writeUInt16LE(1, 8);
+    fmt.writeUInt16LE(1, 10);
+    fmt.writeUInt32LE(16000, 12);
+    fmt.writeUInt32LE(32000, 16);
+    fmt.writeUInt16LE(2, 20);
+    fmt.writeUInt16LE(16, 22);
+    // LIST chunk with an odd payload size (5) followed by one pad byte.
+    const list = Buffer.concat([Buffer.from('LIST'), Buffer.from([5, 0, 0, 0]), Buffer.from('abcde'), Buffer.from([0])]);
+    const samples = Buffer.from([1, 2, 3, 4, 5, 6]);
+    const dataHeader = Buffer.alloc(8);
+    dataHeader.write('data', 0, 'ascii');
+    dataHeader.writeUInt32LE(1000, 4); // claims far more than is present
+    const body = Buffer.concat([Buffer.from('WAVE'), fmt, list, dataHeader, samples]);
+    const riff = Buffer.alloc(8);
+    riff.write('RIFF', 0, 'ascii');
+    riff.writeUInt32LE(body.length, 4);
+    const out = wavToPcm(Buffer.concat([riff, body]));
+    expect(out.pcm.equals(samples)).toBe(true);
+    expect(out.sampleRate).toBe(16000);
+    expect(out.channels).toBe(1);
   });
 });
 
