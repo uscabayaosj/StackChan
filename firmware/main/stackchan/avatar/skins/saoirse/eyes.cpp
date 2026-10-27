@@ -1,5 +1,6 @@
 #include "saoirse.h"
 #include <assets/assets.h>
+#include <algorithm>
 
 using namespace uitk;
 using namespace uitk::lvgl_cpp;
@@ -23,11 +24,10 @@ std::unique_ptr<Container> make_circle(lv_obj_t* parent, int diameter, uint32_t 
 }
 
 // The arc PNGs were cropped from the full canvas at x = 67 (left) / 149 (right), 74 px wide;
-// the circular box starts 4 px further right, so shift them back by 4.
-int kEyeLeftX_or_RightX(bool isLeftEye)
-{
-    return isLeftEye ? kEyeLeftX : kEyeRightX;
-}
+// each crop starts 4 px left of its eye box (71 / 153), so shift them by -4 in box coordinates.
+constexpr int kArcOffsetX = -4;
+
+constexpr int kMaxTiltTenths = 300;  // lid tilt limit: stock-skin keyframes pass much larger values
 
 int wrap_rotation(int tenths)
 {
@@ -88,12 +88,11 @@ SaoirseEyes::SaoirseEyes(lv_obj_t* parent, bool isLeftEye) : _is_left_eye(isLeft
     _happy = std::make_unique<Image>(_box->get());
     _happy->setSrc(&_happy_dsc);
     _happy->setAlign(LV_ALIGN_TOP_LEFT);
-    _happy->setPos(67 - kEyeLeftX_or_RightX(isLeftEye), 118 - kEyeY);
+    _happy->setPos(kArcOffsetX, 118 - kEyeY);
     _sleepy = std::make_unique<Image>(_box->get());
     _sleepy->setSrc(&_sleepy_dsc);
     _sleepy->setAlign(LV_ALIGN_TOP_LEFT);
-    _sleepy->setPos(67 - kEyeLeftX_or_RightX(isLeftEye), 124 - kEyeY);
-    showArc(false, false);
+    _sleepy->setPos(kArcOffsetX, 124 - kEyeY);
 
     setSize(0);
     setWeight(100);
@@ -127,7 +126,18 @@ void SaoirseEyes::setPosition(const Vector2i& position)
 void SaoirseEyes::applyLid()
 {
     // weight 100 = open: lid fully above the box (clipped). weight 0 = closed: lid covers the box.
-    const int y = -kEyeBox + map_range(100 - _weight, 0, 100, 0, kEyeBox);
+    int weight = _weight;
+    if (_arc != Arc::None) {
+        if (weight <= 25) {
+            weight = 0;  // blink (weight 25) on a closed-eye emotion stays fully closed
+        } else {
+            _arc = Arc::None;  // eye genuinely opened: never draw an arc over an open iris
+        }
+    }
+    _happy->setHidden(_arc != Arc::Happy);
+    _sleepy->setHidden(_arc != Arc::Sleepy);
+
+    const int y = -kEyeBox + map_range(100 - weight, 0, 100, 0, kEyeBox);
     _lid->setPos(-(kLidWidth - kEyeBox) / 2, y);
     _lid->setRotation(_lid_rotation);
 }
@@ -141,14 +151,8 @@ void SaoirseEyes::setWeight(int weight)
 void SaoirseEyes::setRotation(int rotation)
 {
     Element::setRotation(rotation);
-    _lid_rotation = wrap_rotation(rotation);
+    _lid_rotation = wrap_rotation(std::clamp(rotation, -kMaxTiltTenths, kMaxTiltTenths));
     applyLid();
-}
-
-void SaoirseEyes::showArc(bool happy, bool sleepy)
-{
-    _happy->setHidden(!happy);
-    _sleepy->setHidden(!sleepy);
 }
 
 void SaoirseEyes::setEmotion(const Emotion& emotion)
@@ -157,18 +161,20 @@ void SaoirseEyes::setEmotion(const Emotion& emotion)
         return;
     }
     // tilt > 0 lowers the inner (nose-side) corner of the lid; mirrored per eye.
-    auto apply = [this](int weight, int tilt_tenths, bool happy, bool sleepy) {
+    auto apply = [this](int weight, int tilt_tenths, Arc arc) {
+        _arc = Arc::None;  // so the weight change below is not filtered by a stale arc
         setRotation(_is_left_eye ? tilt_tenths : -tilt_tenths);
         setWeight(weight);
-        showArc(happy, sleepy);
+        _arc = arc;
+        applyLid();
     };
     switch (emotion) {
-        case Emotion::Neutral: apply(100, 0, false, false); break;
-        case Emotion::Happy:   apply(0, 0, true, false); break;
-        case Emotion::Angry:   apply(45, 180, false, false); break;
-        case Emotion::Sad:     apply(45, -180, false, false); break;
-        case Emotion::Doubt:   apply(_is_left_eye ? 100 : 50, 0, false, false); break;
-        case Emotion::Sleepy:  apply(0, 0, false, true); break;
+        case Emotion::Neutral: apply(100, 0, Arc::None); break;
+        case Emotion::Happy:   apply(0, 0, Arc::Happy); break;
+        case Emotion::Angry:   apply(45, 180, Arc::None); break;
+        case Emotion::Sad:     apply(45, -180, Arc::None); break;
+        case Emotion::Doubt:   apply(_is_left_eye ? 100 : 50, 0, Arc::None); break;
+        case Emotion::Sleepy:  apply(0, 0, Arc::Sleepy); break;
         default: break;
     }
 }
@@ -182,7 +188,7 @@ void SaoirseEyes::setVisible(bool visible)
 void SaoirseEyes::setSize(int size)
 {
     Feature::setSize(size);
-    // -100..100 -> pupil 18..34 px: wide pupils when excited, pinned when annoyed.
+    // -100..100 -> pupil 16..30 px: wide pupils when excited, pinned when annoyed.
     const int pupil = map_range(_size, -100, 100, 16, 30);
     _pupil->setSize(pupil, pupil);
 }

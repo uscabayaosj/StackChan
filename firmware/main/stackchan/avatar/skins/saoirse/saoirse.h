@@ -46,8 +46,12 @@ public:
     void setSize(int size) override;
 
 private:
-    void applyLid();
-    void showArc(bool happy, bool sleepy);
+    void applyLid();  // also decides arc visibility from _arc and the current weight
+
+    // Closed-eye emotions (Happy/Sleepy) draw an arc over a fully closed lid. While an arc is
+    // active any weight <= 25 (e.g. a blink) renders as closed; a weight above 25 drops the arc.
+    enum class Arc { None, Happy, Sleepy };
+    Arc _arc = Arc::None;
 
     bool _is_left_eye = false;
     int _lid_rotation = 0;  // tenths of a degree, LVGL range 0..3600
@@ -55,7 +59,7 @@ private:
     lv_image_dsc_t _happy_dsc{};
     lv_image_dsc_t _sleepy_dsc{};
 
-    std::unique_ptr<uitk::lvgl_cpp::Container> _box;    // 74x74, clips children
+    std::unique_ptr<uitk::lvgl_cpp::Container> _box;    // 66x66, clips children
     std::unique_ptr<uitk::lvgl_cpp::Container> _gaze;   // moves with gaze
     std::unique_ptr<uitk::lvgl_cpp::Container> _rim;
     std::unique_ptr<uitk::lvgl_cpp::Container> _iris;
