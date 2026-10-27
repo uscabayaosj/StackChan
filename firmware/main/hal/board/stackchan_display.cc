@@ -251,8 +251,7 @@ void StackChanAvatarDisplay::SetupUI()
 
     ESP_LOGI(TAG, "Creating Stack-chan Avatar...");
 
-    auto avatar = std::make_unique<DefaultAvatar>();
-    avatar->init(lv_screen_active());
+    auto avatar = createAvatar(lv_screen_active());
     avatar->getPanel()->onClick().connect([]() {
         static uint32_t last_toggle_tick = 0;
         const uint32_t now               = GetHAL().millis();

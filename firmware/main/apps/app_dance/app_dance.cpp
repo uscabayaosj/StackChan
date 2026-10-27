@@ -53,8 +53,7 @@ void AppDance::onOpen()
     loading_page.reset();
 
     // Create default avatar
-    auto avatar = std::make_unique<avatar::DefaultAvatar>();
-    avatar->init(lv_screen_active());
+    auto avatar = avatar::createAvatar(lv_screen_active());
     GetStackChan().attachAvatar(std::move(avatar));
 
     /* ------------------------------- BLE events ------------------------------- */

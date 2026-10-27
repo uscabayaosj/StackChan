@@ -6,6 +6,8 @@
 #pragma once
 #include "elements/key_elements.h"
 #include "decorator.h"
+#include <lvgl.h>
+#include <smooth_lvgl.hpp>
 #include <memory>
 
 namespace stackchan::avatar {
@@ -16,6 +18,14 @@ namespace stackchan::avatar {
  */
 class Avatar {
 public:
+    virtual ~Avatar() = default;
+
+    /** Build the LVGL objects under parent. Skins override this. */
+    virtual void init(lv_obj_t* parent, const lv_font_t* font = &lv_font_montserrat_16) {}
+
+    /** The 320x240 panel that receives taps; may be null for skins without one. */
+    virtual uitk::lvgl_cpp::Container* getPanel() const { return nullptr; }
+
     /**
      * @brief Update avatar, trigger all elements, decorators and modifiers to update
      *
