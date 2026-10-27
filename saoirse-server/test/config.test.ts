@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, deriveVisionUrl, DEFAULT_DEVICE_TOOLS } from '../src/config.js';
 
 const base = {
   LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v',
@@ -20,6 +20,13 @@ describe('loadConfig', () => {
     expect(c.vad.silenceMs).toBe(1200);
     expect(c.echoGuardMs).toBe(250);
     expect(c.wakeGuardMs).toBe(800);
+    expect(c.deviceTools).toEqual(DEFAULT_DEVICE_TOOLS);
+    expect(c.vision.model).toBe('google/gemini-3.5-flash-lite');
+    expect(c.vision.apiKey).toBe(c.llm.apiKey);
+    expect(c.vision.baseUrl).toBe(c.llm.baseUrl);
+    expect(c.vision.timeoutMs).toBe(15000);
+    expect(c.vision.maxBytes).toBe(3 * 1024 * 1024);
+    expect(c.toolTimeoutMs).toEqual({ camera: 25000, other: 8000 });
     expect(c.idleCloseMs).toBe(60000);
     expect(c.fallbackLlm).toBeUndefined();
   });
@@ -73,5 +80,22 @@ describe('loadConfig', () => {
   });
   it('throws on a missing required key', () => {
     expect(() => loadConfig({ ...base, ELEVENLABS_API_KEY: '' })).toThrow(/ELEVENLABS_API_KEY/);
+  });
+});
+
+describe('vision url and tools', () => {
+  it('derives the vision upload url from the public ws url', () => {
+    expect(deriveVisionUrl('wss://saoirse-server.vercel.app/api/ws')).toBe('https://saoirse-server.vercel.app/api/vision');
+    expect(deriveVisionUrl('ws://192.168.1.10:8765/api/ws')).toBe('http://192.168.1.10:8765/api/vision');
+    expect(deriveVisionUrl('wss://h.example/')).toBe('https://h.example/api/vision');
+  });
+  it('PUBLIC_VISION_URL, VISION_* and DEVICE_TOOLS override the defaults', () => {
+    const base = { LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'wss://h/api/ws', SAOIRSE_DEVICE_TOKEN: 't' };
+    const c = loadConfig({ ...base, PUBLIC_VISION_URL: 'https://other/v', VISION_MODEL: 'x/y', VISION_API_KEY: 'vk', DEVICE_TOOLS: 'self.camera.take_photo, self.reboot' });
+    expect(c.publicVisionUrl).toBe('https://other/v');
+    expect(c.vision.model).toBe('x/y');
+    expect(c.vision.apiKey).toBe('vk');
+    expect(c.deviceTools).toEqual(['self.camera.take_photo', 'self.reboot']);
+    expect(loadConfig(base).publicVisionUrl).toBe('https://h/api/vision');
   });
 });

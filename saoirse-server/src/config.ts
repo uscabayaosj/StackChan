@@ -31,6 +31,25 @@ export interface Config {
   ttsTimeoutMs: number;
   /** IANA time zone of the robot (e.g. Asia/Manila): OTA clock offset and the prompt's local time. */
   deviceTz: string;
+  /** Robot MCP tools offered to the LLM (names as the robot advertises them). */
+  deviceTools: string[];
+  /** Where the robot uploads photos (`/api/vision`); derived from PUBLIC_WS_URL unless PUBLIC_VISION_URL is set. */
+  publicVisionUrl: string;
+  vision: { baseUrl: string; apiKey: string; model: string; timeoutMs: number; maxBytes: number };
+  /** Deadlines for a robot tool call: the camera (capture + upload + vision model) and everything else. */
+  toolTimeoutMs: { camera: number; other: number };
+}
+
+export const DEFAULT_DEVICE_TOOLS = ['self.camera.take_photo', 'self.robot.set_head_angles', 'self.robot.get_head_angles', 'self.robot.set_led_color'];
+
+/** `wss://host/api/ws` -> `https://host/api/vision` (ws -> http for local runs). */
+export function deriveVisionUrl(publicWsUrl: string): string {
+  const u = new URL(publicWsUrl);
+  u.protocol = u.protocol === 'ws:' ? 'http:' : 'https:';
+  u.pathname = u.pathname.replace(/\/api\/ws\/?$/, '/api/vision');
+  if (!u.pathname.endsWith('/api/vision')) u.pathname = '/api/vision';
+  u.search = '';
+  return u.toString();
 }
 
 function req(env: NodeJS.ProcessEnv, key: string): string {
@@ -106,5 +125,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llmTimeoutMs: num(env, 'LLM_TIMEOUT_MS', 15_000),
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
+    deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
+    publicVisionUrl: env.PUBLIC_VISION_URL || deriveVisionUrl(req(env, 'PUBLIC_WS_URL')),
+    vision: {
+      baseUrl: env.VISION_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      apiKey: env.VISION_API_KEY || req(env, 'LLM_API_KEY'),
+      model: env.VISION_MODEL || 'google/gemini-3.5-flash-lite',
+      timeoutMs: num(env, 'VISION_TIMEOUT_MS', 15_000),
+      maxBytes: num(env, 'VISION_MAX_BYTES', 3 * 1024 * 1024),
+    },
+    toolTimeoutMs: { camera: num(env, 'TOOL_TIMEOUT_CAMERA_MS', 25_000), other: num(env, 'TOOL_TIMEOUT_MS', 8_000) },
   };
 }

@@ -4,8 +4,9 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config } from './config.js';
 import { createCodec, type OpusCodec } from './opus.js';
 import { transcribe } from './stt.js';
-import { streamChatWithFallback, type ChatMessage } from './llm.js';
+import { streamChatEventsWithFallback, type ChatMessage } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
+import { handleVision } from './vision.js';
 import { Session, type SessionDeps, type SessionSocket } from './session.js';
 import { callWithDeadline, streamWithDeadline } from './deadline.js';
 import { buildOtaResponse, deviceVersionFromBody } from './ota.js';
@@ -45,8 +46,8 @@ export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchI
     codec,
     transcribe: (pcm, signal) =>
       callWithDeadline('STT', cfg.sttTimeoutMs, signal, s => transcribe(cfg.elevenlabs, pcm, fetchImpl, { signal: s })),
-    chat: (messages, signal) =>
-      streamWithDeadline('LLM', cfg.llmTimeoutMs, signal, s => streamChatWithFallback(cfg.llm, cfg.fallbackLlm, messages, fetchImpl, { signal: s })),
+    chat: (messages, signal, tools) =>
+      streamWithDeadline('LLM', cfg.llmTimeoutMs, signal, s => streamChatEventsWithFallback(cfg.llm, cfg.fallbackLlm, messages, fetchImpl, { signal: s, tools })),
     synthesize: (text, signal) =>
       streamWithDeadline('TTS', cfg.ttsTimeoutMs, signal, s => synthesizeToFrames(cfg.elevenlabs, text, codec, fetchImpl, { signal: s })),
     now: () => Date.now(),
@@ -175,6 +176,7 @@ export function createAppServer(cfg: Config, deps?: SessionDeps, codecFactory?: 
     const pathname = safePathname(req);
     if (pathname === null) { res.writeHead(400, { Connection: 'close' }); res.end(); return; }
     if (req.method === 'POST' && pathname === '/api/ota') { void handleOta(cfg, req, res); return; }
+    if (req.method === 'POST' && pathname === '/api/vision') { void handleVision(cfg, req, res); return; }
     if (req.method === 'GET' && pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('saoirse-server ok'); return; }
     res.writeHead(404); res.end();
   });

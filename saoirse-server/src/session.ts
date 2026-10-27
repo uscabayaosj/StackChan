@@ -5,7 +5,8 @@ import { EnergyVad } from './vad.js';
 import { SentenceAccumulator, extractEmotion, speechText } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
 import { formatLocalTime } from './clock.js';
-import type { ChatMessage } from './llm.js';
+import type { ChatMessage, ChatEvent, ToolCall, ToolSpec } from './llm.js';
+import { DeviceMcp } from './mcp.js';
 
 export interface SessionSocket {
   sendText(json: object): void;
@@ -19,11 +20,14 @@ export interface SessionDeps {
   codec: OpusCodec;
   /** Each call gets the turn's signal: aborted on barge-in (`abort`) and when the socket closes. */
   transcribe(pcm: Buffer, signal: AbortSignal): Promise<string>;
-  chat(messages: ChatMessage[], signal: AbortSignal): AsyncGenerator<string>;
+  /** Yields text (plain strings or text events) and, when `tools` are offered and the model wants them, one `tool_calls` event. */
+  chat(messages: ChatMessage[], signal: AbortSignal, tools?: ToolSpec[]): AsyncGenerator<string | ChatEvent>;
   synthesize(text: string, signal: AbortSignal): AsyncGenerator<Buffer>;
   now(): number;
   sleep(ms: number): Promise<void>;
   log(msg: string): void;
+  /** Timers for robot tool-call deadlines (defaults to the globals). */
+  timers?: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (h: unknown) => void };
 }
 
 type State = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -43,6 +47,25 @@ export const MAX_LEAD_FRAMES = 30;
  * two-slot playback queue, so a stop that lands early clips the end of the reply.
  */
 export const TTS_STOP_MARGIN_MS = 500;
+/** How many LLM rounds a turn may take (each tool round is one more LLM call). */
+export const MAX_TOOL_ROUNDS = 3;
+export const CAMERA_TOOL = 'self.camera.take_photo';
+/** Spoken before a photo when the model said nothing first, so the robot is not silent for the capture. */
+export const CAMERA_FILLER = 'Let me look.';
+/** Spoken when the model is still asking for tools after the last round. */
+export const LOOP_FILLER = "I'm going in circles. Ask again.";
+
+/** The robot returns the vision service's HTTP body verbatim; unwrap `{success, text}` for the model. */
+export function cameraResultText(raw: string): string {
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') {
+      if (obj.success === false) return `Error: ${typeof obj.message === 'string' ? obj.message : 'photo failed'}`;
+      if (typeof obj.text === 'string') return obj.text;
+    }
+  } catch { /* not JSON: use as is */ }
+  return raw;
+}
 
 /** Leading `[emotion]` tag plus the whitespace after it (same shape `extractEmotion` accepts). */
 const TAG_PREFIX = /^\s*\[[a-z]+\]\s*/i;
@@ -79,6 +102,8 @@ export class Session {
   private running: Promise<void> | null = null;
   private disposed = false;
   private closed = false;
+  /** MCP client for the robot's tools (camera, head, lights). */
+  readonly mcp: DeviceMcp;
 
   constructor(
     private readonly socket: SessionSocket,
@@ -91,6 +116,17 @@ export class Session {
     this.vad = new EnergyVad({ rmsThreshold: v.rmsThreshold, silenceMs: v.silenceMs, minSpeechMs: v.minSpeechMs, frameMs: FRAME_MS });
     this.lastSpeechAt = deps.now();
     this.startedAt = deps.now();
+    const timers = deps.timers ?? {
+      setTimeout: (fn: () => void, ms: number) => { const h = setTimeout(fn, ms); (h as any).unref?.(); return h; },
+      clearTimeout: (h: unknown) => clearTimeout(h as any),
+    };
+    this.mcp = new DeviceMcp({
+      sendMcp: payload => this.socket.sendText({ session_id: this.sessionId, type: 'mcp', payload }),
+      log: m => deps.log(m),
+      now: () => deps.now(),
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    }, deps.config.deviceTools);
   }
 
   /** Wait for any in-flight processing (used by tests and by the socket close handler). */
@@ -101,6 +137,7 @@ export class Session {
   dispose(): void {
     this.disposed = true;
     this.requestAbort();
+    this.mcp.dispose();
   }
 
   private requestAbort(): void {
@@ -132,6 +169,8 @@ export class Session {
           type: 'hello', transport: 'websocket', session_id: this.sessionId,
           audio_params: { format: 'opus', sample_rate: OUTPUT_SAMPLE_RATE, channels: 1, frame_duration: FRAME_MS },
         });
+        // Tell the robot where photos go and learn its tools; replies arrive as `mcp` messages.
+        void this.mcp.start({ url: this.deps.config.publicVisionUrl, token: this.deps.config.deviceToken });
         break;
       case 'listen':
         if (msg.mode === 'auto' || msg.mode === 'manual' || msg.mode === 'realtime') this.mode = msg.mode;
@@ -148,7 +187,7 @@ export class Session {
         this.requestAbort();
         break;
       case 'mcp':
-        // Tool results are not used in this round; acknowledged silently.
+        this.mcp.handle(msg.payload);
         break;
       default:
         this.deps.log(`unhandled message type ${msg.type}`);
@@ -277,17 +316,43 @@ export class Session {
       for (const s of acc.push(delta)) await speak(s);
     };
 
+    /** Speak everything buffered so far (handles a reply that never got past the emotion tag). */
+    const flushText = async () => {
+      if (!emotionSent && full.trim()) {
+        for (const s of acc.push(sendEmotion())) await speak(s);
+      }
+      const tail = acc.flush();
+      if (tail) await speak(tail);
+    };
+
     try {
-      for await (const chunk of this.deps.chat(messages, signal)) {
-        if (this.abortRequested) break;
-        await handleChunk(chunk);
+      const working: ChatMessage[] = [...messages];
+      let calls: ToolCall[] | null = null;
+      for (let round = 1; round <= MAX_TOOL_ROUNDS && !this.abortRequested; round++) {
+        calls = null;
+        const tools = this.mcp.toolSpecs();
+        let roundText = '';
+        for await (const ev of this.deps.chat(working, signal, tools.length > 0 ? tools : undefined)) {
+          if (this.abortRequested) break;
+          const event: ChatEvent = typeof ev === 'string' ? { type: 'text', text: ev } : ev;
+          if (event.type === 'text') { roundText += event.text; await handleChunk(event.text); }
+          else calls = event.calls;
+        }
+        if (this.abortRequested || !calls) break;
+        // What the model said before asking for tools is heard first; a photo gets a filler if it said nothing.
+        await flushText();
+        if (!/\s$/.test(full)) full += ' ';
+        if (calls.some(c => c.name === CAMERA_TOOL) && spoken.length === 0) await speak(CAMERA_FILLER);
+        const results = await this.runTools(calls, signal);
+        working.push({
+          role: 'assistant', content: stripTag(roundText).trim() || null,
+          tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
+        });
+        for (const r of results) working.push({ role: 'tool', tool_call_id: r.id, content: r.text });
       }
       if (!this.abortRequested) {
-        if (!emotionSent && full.trim()) {
-          for (const s of acc.push(sendEmotion())) await speak(s);
-        }
-        const tail = acc.flush();
-        if (tail) await speak(tail);
+        if (calls) { await speak(LOOP_FILLER); full += ` ${LOOP_FILLER}`; }
+        else await flushText();
         completed = !this.abortRequested;
       }
     } finally {
@@ -311,6 +376,27 @@ export class Session {
       this.trimHistory();
       this.lastSpeechAt = this.deps.now();
     }
+  }
+
+  /** Runs the model's tool calls on the robot, in order; every failure becomes an `Error: …` tool result. */
+  private async runTools(calls: ToolCall[], signal: AbortSignal): Promise<{ id: string; text: string }[]> {
+    const out: { id: string; text: string }[] = [];
+    for (const call of calls) {
+      let args: Record<string, unknown> = {};
+      try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {}; } catch { out.push({ id: call.id, text: 'Error: tool arguments were not valid JSON' }); continue; }
+      const isCamera = call.name === CAMERA_TOOL;
+      const timeoutMs = isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
+      let text: string;
+      try {
+        text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
+        if (isCamera) text = cameraResultText(text);
+      } catch (err) {
+        text = `Error: ${(err as Error).message}`;
+      }
+      this.deps.log(`tool ${call.name} ${call.arguments.slice(0, 80)} -> ${text.replace(/\s+/g, ' ').slice(0, 100)}`);
+      out.push({ id: call.id, text });
+    }
+    return out;
   }
 
   /** Keep at most contextTurns exchanges, dropping whole user/assistant pairs from the front. */

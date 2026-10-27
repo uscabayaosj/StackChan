@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, TTS_STOP_MARGIN_MS, type SessionDeps, type SessionSocket } from '../src/session.js';
+import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, TTS_STOP_MARGIN_MS, MAX_TOOL_ROUNDS, LOOP_FILLER, type SessionDeps, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 import { FRAME_BYTES } from '../src/opus.js';
 import { SYSTEM_PROMPT } from '../src/persona.js';
@@ -21,7 +21,7 @@ function makeEnv() {
   };
   const loud = Buffer.alloc(FRAME_BYTES); for (let i = 0; i < FRAME_BYTES; i += 2) loud.writeInt16LE(6000, i);
   const deps: SessionDeps = {
-    config: loadConfig({ LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'ws://x', SAOIRSE_DEVICE_TOKEN: 't', VAD_SILENCE_MS: '300', VAD_MIN_SPEECH_MS: '120' }),
+    config: loadConfig({ LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'wss://x/api/ws', SAOIRSE_DEVICE_TOKEN: 't', VAD_SILENCE_MS: '300', VAD_MIN_SPEECH_MS: '120' }),
     codec: { encodeFrame: (p) => p.subarray(0, 4), decode: (pkt) => (pkt[0] === 1 ? loud : Buffer.alloc(FRAME_BYTES)) },
     transcribe: async () => 'what is the time',
     chat: async function* () { yield '[doubtful] '; yield 'Late. '; yield 'You know that.'; },
@@ -64,10 +64,11 @@ describe('Session', () => {
     for (let i = 0; i < 4; i++) s.handleBinary(env.speech);   // 240 ms speech
     for (let i = 0; i < 5; i++) s.handleBinary(env.silence);  // 300 ms silence -> end
     await s.drain();
-    const types = env.sent.slice(1).map(m => `${m.type}${m.state ? ':' + m.state : ''}${m.emotion ? ':' + m.emotion : ''}`);
+    const sent = env.sent.filter(m => m.type !== 'mcp'); // the mcp initialize after hello is not part of the turn
+    const types = sent.slice(1).map(m => `${m.type}${m.state ? ':' + m.state : ''}${m.emotion ? ':' + m.emotion : ''}`);
     expect(types).toEqual(['stt', 'llm:doubtful', 'tts:start', 'tts:sentence_start', 'tts:sentence_start', 'tts:stop']);
-    expect(env.sent[1].text).toBe('what is the time');
-    expect(env.sent[4].text).toBe('Late.');
+    expect(sent[1].text).toBe('what is the time');
+    expect(sent[4].text).toBe('Late.');
     expect(env.bins).toHaveLength(4); // 2 sentences x 2 frames
     expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'Late. You know that.' });
   });
@@ -147,7 +148,7 @@ describe('Session', () => {
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
     utter(s, env);
     await s.drain();
-    expect(env.sent.slice(1).map(m => m.type)).toEqual(['stt']);
+    expect(env.sent.filter(m => m.type !== 'mcp').slice(1).map(m => m.type)).toEqual(['stt']);
     expect(env.bins).toHaveLength(0);
     expect(s.history.at(-1)).toEqual({ role: 'user', content: 'what is the time' });
   });
@@ -164,7 +165,7 @@ describe('Session', () => {
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
     utter(s, env);
     await s.drain();
-    expect(env.sent).toHaveLength(1); // only the hello reply
+    expect(env.sent.filter(m => m.type !== 'mcp')).toHaveLength(1); // only the hello reply (plus the mcp initialize)
     expect(s.history).toHaveLength(0);
   });
 
@@ -498,7 +499,7 @@ describe('Session', () => {
     env.advance(Date.parse('2026-10-27T04:05:00Z'));
     let system = '';
     const chat = env.deps.chat;
-    env.deps.chat = (messages, signal) => { system = messages[0].content; return chat(messages, signal); };
+    env.deps.chat = (messages, signal) => { system = String(messages[0].content); return chat(messages, signal); };
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await s.handleText(hello);
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
@@ -524,5 +525,145 @@ describe('Session', () => {
       { role: 'user', content: 'what is the time' },
       { role: 'assistant', content: 'Late. You know that.' },
     ]);
+  });
+});
+
+describe('Session robot tools', () => {
+  const cameraTool = { name: 'self.camera.take_photo', description: 'photo', inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] } };
+  const headTool = { name: 'self.robot.set_head_angles', description: 'head', inputSchema: { type: 'object', properties: { yaw: { type: 'integer' }, pitch: { type: 'integer' }, speed: { type: 'integer' } }, required: [] } };
+  const settle = () => new Promise<void>(r => setTimeout(r, 0));
+
+  /** Answers the session's mcp initialize + tools/list so tools are known, and auto-replies to tools/call with `toolReply`. */
+  async function withTools(env: ReturnType<typeof makeEnv>, s: Session, toolReply: (name: string, args: any) => object | 'none') {
+    const origSend = env.socket.sendText;
+    env.socket.sendText = (j: any) => {
+      origSend(j);
+      if (j.type !== 'mcp') return;
+      const p = j.payload;
+      if (p.method === 'initialize') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, result: { protocolVersion: '2024-11-05' } } })), 0);
+      if (p.method === 'tools/list') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, result: { tools: [cameraTool, headTool, { name: 'self.reboot', description: 'r', inputSchema: {} }] } } })), 0);
+      if (p.method === 'tools/call') {
+        const reply = toolReply(p.params.name, p.params.arguments);
+        if (reply !== 'none') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, ...reply } })), 0);
+      }
+    };
+    await s.handleText(hello);
+    for (let i = 0; i < 6 && s.mcp.tools.length === 0; i++) await settle();
+    expect(s.mcp.tools.map(t => t.name)).toEqual(['self.camera.take_photo', 'self.robot.set_head_angles']);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+  }
+  const toolCalls = (calls: any[]) => ({ type: 'tool_calls' as const, calls });
+  const sentences = (env: ReturnType<typeof makeEnv>) => env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text);
+
+  it('a photo turn: speaks the filler, calls take_photo on the robot, feeds the description back, speaks the answer', async () => {
+    const env = makeEnv();
+    const rounds: any[][] = [];
+    const toolsSeen: any[] = [];
+    env.deps.chat = async function* (messages, _signal, tools) {
+      rounds.push(messages); toolsSeen.push(tools);
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'c1', name: 'self.camera.take_photo', arguments: '{"question":"what is on the desk?"}' }]);
+      else { yield '[happy] A grey cat, judging '; yield 'me. '; }
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, (name, args) => {
+      expect(name).toBe('self.camera.take_photo');
+      expect(args).toEqual({ question: 'what is on the desk?' });
+      return { result: { content: [{ type: 'text', text: JSON.stringify({ success: true, text: 'A grey cat sits on a desk, staring at the camera.' }) }], isError: false } };
+    });
+    utter(s, env);
+    await s.drain();
+    expect(sentences(env)).toEqual(['Let me look.', 'A grey cat, judging me.']);
+    expect(toolsSeen[0].map((t: any) => t.function.name)).toEqual(['self.camera.take_photo', 'self.robot.set_head_angles']);
+    const second = rounds[1];
+    expect(second.at(-2)).toMatchObject({ role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'self.camera.take_photo' } }] });
+    expect(second.at(-1)).toEqual({ role: 'tool', tool_call_id: 'c1', content: 'A grey cat sits on a desk, staring at the camera.' });
+    expect(env.sent.some(m => m.type === 'llm' && m.emotion === 'happy')).toBe(true);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+    expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'A grey cat, judging me.' });
+    expect(env.logs.some(l => l.startsWith('tool self.camera.take_photo {"question":"what is on the desk?"} -> A grey cat sits'))).toBe(true);
+  });
+
+  it('a head turn: no filler, the text the model said first is spoken before the move, the robot reply is passed back', async () => {
+    const env = makeEnv();
+    const rounds: any[][] = [];
+    env.deps.chat = async function* (messages) {
+      rounds.push(messages);
+      if (!messages.some(m => m.role === 'tool')) { yield '[neutral] Fine. '; yield toolCalls([{ id: 'h1', name: 'self.robot.set_head_angles', arguments: '{"yaw":-35,"speed":150}' }]); }
+      else yield 'Happy now? ';
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, () => ({ result: { content: [{ type: 'text', text: 'true' }], isError: false } }));
+    utter(s, env);
+    await s.drain();
+    expect(sentences(env)).toEqual(['Fine.', 'Happy now?']);
+    expect(rounds[1].at(-2)).toMatchObject({ role: 'assistant', content: 'Fine.' });
+    expect(rounds[1].at(-1)).toEqual({ role: 'tool', tool_call_id: 'h1', content: 'true' });
+    expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'Fine. Happy now?' });
+  });
+
+  it('a failing tool becomes an Error tool result, a failed photo unwraps the message, bad JSON arguments are reported', async () => {
+    const env = makeEnv();
+    let second: any[] = [];
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([
+        { id: 'a', name: 'self.robot.set_head_angles', arguments: '{"yaw":' },
+        { id: 'b', name: 'self.camera.take_photo', arguments: '{"question":"q"}' },
+        { id: 'c', name: 'self.robot.set_head_angles', arguments: '{"yaw":1}' },
+      ]);
+      else { second = messages; yield '[sad] No luck. '; }
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, (name) => name === 'self.camera.take_photo'
+      ? { result: { content: [{ type: 'text', text: JSON.stringify({ success: false, message: 'Failed to capture photo' }) }], isError: false } }
+      : { error: { message: 'Unknown tool: self.robot.set_head_angles' } });
+    utter(s, env);
+    await s.drain();
+    expect(second.filter(m => m.role === 'tool').map(m => m.content)).toEqual([
+      'Error: tool arguments were not valid JSON', 'Error: Failed to capture photo', 'Error: Unknown tool: self.robot.set_head_angles']);
+    expect(sentences(env)).toEqual(['Let me look.', 'No luck.']);
+  });
+
+  it('stops after MAX_TOOL_ROUNDS rounds of tool calls and says so', async () => {
+    const env = makeEnv();
+    let n = 0;
+    env.deps.chat = async function* () { n++; yield toolCalls([{ id: `h${n}`, name: 'self.robot.set_head_angles', arguments: '{"yaw":0}' }]); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, () => ({ result: { content: [{ type: 'text', text: 'true' }], isError: false } }));
+    utter(s, env);
+    await s.drain();
+    expect(n).toBe(MAX_TOOL_ROUNDS);
+    expect(env.sent.filter(m => m.type === 'mcp' && m.payload.method === 'tools/call')).toHaveLength(MAX_TOOL_ROUNDS);
+    expect(sentences(env)).toEqual([LOOP_FILLER]);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
+  it('offers no tools to the model when the robot advertised none', async () => {
+    const env = makeEnv();
+    let toolsSeen: any = 'unset';
+    env.deps.chat = async function* (_m, _s, tools) { toolsSeen = tools; yield '[neutral] Hi. '; };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    expect(env.sent[1]).toMatchObject({ type: 'mcp', payload: { method: 'initialize', params: { capabilities: { vision: { url: 'https://x/api/vision', token: 't' } } } } });
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(toolsSeen).toBeUndefined();
+    expect(sentences(env)).toEqual(['Hi.']);
+  });
+
+  it('a barge-in while a tool call is pending ends the turn with tts stop', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'c1', name: 'self.camera.take_photo', arguments: '{"question":"q"}' }]);
+      else yield 'never spoken';
+    };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, () => { setTimeout(() => void s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' })), 0); return 'none'; });
+    utter(s, env);
+    await s.drain();
+    expect(sentences(env)).toEqual(['Let me look.']);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+    expect(env.logs.some(l => /tool self.camera.take_photo .* -> Error: aborted/.test(l))).toBe(true);
   });
 });
