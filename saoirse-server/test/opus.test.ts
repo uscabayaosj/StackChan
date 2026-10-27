@@ -14,14 +14,24 @@ describe('opus', () => {
     expect(frames.every(f => f.length === FRAME_BYTES)).toBe(true);
     expect(frames[2].subarray(100).every(b => b === 0)).toBe(true);
   });
-  it('round-trips a frame through the encoder and decoder', () => {
+  describe.each(['native', 'wasm'] as const)('%s codec', (kind) => {
+    it('round-trips a frame through the encoder and decoder', () => {
+      const codec = createCodec(kind);
+      const packet = codec.encodeFrame(sine(FRAME_SAMPLES));
+      expect(packet.length).toBeGreaterThan(10);
+      expect(packet.length).toBeLessThan(400);
+      const pcm = codec.decode(packet);
+      expect(pcm.length).toBe(FRAME_BYTES);
+      expect(rms(pcm)).toBeGreaterThan(0.12);
+    });
+    it('rejects a frame that is not exactly FRAME_BYTES', () => {
+      const codec = createCodec(kind);
+      expect(() => codec.encodeFrame(Buffer.alloc(100))).toThrow(RangeError);
+    });
+  });
+  it('default codec round-trips a frame', () => {
     const codec = createCodec();
-    const packet = codec.encodeFrame(sine(FRAME_SAMPLES));
-    expect(packet.length).toBeGreaterThan(10);
-    expect(packet.length).toBeLessThan(400);
-    const pcm = codec.decode(packet);
-    expect(pcm.length).toBe(FRAME_BYTES);
-    expect(rms(pcm)).toBeGreaterThan(0.05);
+    expect(rms(codec.decode(codec.encodeFrame(sine(FRAME_SAMPLES))))).toBeGreaterThan(0.12);
   });
   it('rms is 0 for silence and ~0.17 for a 8000-amplitude sine', () => {
     expect(rms(Buffer.alloc(FRAME_BYTES))).toBe(0);

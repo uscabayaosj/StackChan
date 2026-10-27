@@ -13,12 +13,20 @@ export interface OpusCodec {
 
 const require = createRequire(import.meta.url);
 
+// The native encoder hard-aborts the process (uncatchable) on a wrong-sized buffer.
+function assertFrame(pcm: Buffer): void {
+  if (pcm.length !== FRAME_BYTES) throw new RangeError(`encodeFrame expects ${FRAME_BYTES} bytes, got ${pcm.length}`);
+}
+
 function nativeCodec(): OpusCodec {
   const { OpusEncoder } = require('@discordjs/opus') as { OpusEncoder: new (rate: number, ch: number) => any };
   const enc = new OpusEncoder(SAMPLE_RATE, CHANNELS);
   enc.setBitrate(24000);
   return {
-    encodeFrame: (pcm) => Buffer.from(enc.encode(pcm)),
+    encodeFrame: (pcm) => {
+      assertFrame(pcm);
+      return Buffer.from(enc.encode(pcm));
+    },
     decode: (packet) => Buffer.from(enc.decode(packet)),
   };
 }
@@ -28,16 +36,28 @@ function wasmCodec(): OpusCodec {
   const enc = new OpusScript(SAMPLE_RATE, CHANNELS, OpusScript.Application.VOIP);
   enc.setBitrate(24000);
   return {
-    encodeFrame: (pcm) => Buffer.from(enc.encode(pcm, FRAME_SAMPLES)),
+    encodeFrame: (pcm) => {
+      assertFrame(pcm);
+      return Buffer.from(enc.encode(pcm, FRAME_SAMPLES));
+    },
     decode: (packet) => Buffer.from(enc.decode(packet)),
   };
 }
 
-export function createCodec(): OpusCodec {
+let warnedNativeUnavailable = false;
+
+export type CodecKind = 'auto' | 'native' | 'wasm';
+
+export function createCodec(kind: CodecKind = 'auto'): OpusCodec {
+  if (kind === 'native') return nativeCodec();
+  if (kind === 'wasm') return wasmCodec();
   try {
     return nativeCodec();
   } catch (err) {
-    console.warn('[opus] native @discordjs/opus unavailable, using opusscript:', (err as Error).message);
+    if (!warnedNativeUnavailable) {
+      warnedNativeUnavailable = true;
+      console.warn('[opus] native @discordjs/opus unavailable, using opusscript:', (err as Error).message);
+    }
     return wasmCodec();
   }
 }
