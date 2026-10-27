@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Session, MAX_LEAD_FRAMES, type SessionDeps, type SessionSocket } from '../src/session.js';
+import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, type SessionDeps, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 import { FRAME_BYTES } from '../src/opus.js';
 import { SYSTEM_PROMPT } from '../src/persona.js';
@@ -185,6 +185,22 @@ describe('Session', () => {
     expect(env.sentAt[stopIdx] - env.binAt[0]).toBeGreaterThanOrEqual(60 * 60);
   });
 
+  it('never has more frames outstanding than the robot can queue (excess is dropped silently on-device)', async () => {
+    const env = makeEnv();
+    env.deps.chat = async function* () { yield '[happy] One long sentence. '; };
+    env.deps.synthesize = async function* () { for (let i = 0; i < 120; i++) yield Buffer.from([9, i]); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.bins).toHaveLength(120);
+    // The device plays one frame per 60 ms from the first arrival; whatever we sent beyond that sits in its queue.
+    const outstanding = env.binAt.map((t, i) => i + 1 - Math.floor((t - env.binAt[0]) / 60));
+    expect(Math.max(...outstanding)).toBeLessThanOrEqual(DEVICE_DECODE_QUEUE_FRAMES);
+    expect(MAX_LEAD_FRAMES).toBeLessThan(DEVICE_DECODE_QUEUE_FRAMES);
+  });
+
   it('sends tts stop and recovers when synthesize throws after tts start', async () => {
     const env = makeEnv();
     let calls = 0;
@@ -315,9 +331,9 @@ describe('Session', () => {
     const env = makeEnv();
     let s!: Session;
     let abortAt = -1;
-    // 40 frames: below MAX_LEAD_FRAMES, so every sleep is the final drain (40 x 60 ms = 2.4 s ahead).
+    // 25 frames: below MAX_LEAD_FRAMES, so every sleep is the final drain (25 x 60 ms = 1.5 s ahead).
     env.deps.chat = async function* () { yield '[happy] One sentence. '; };
-    env.deps.synthesize = async function* () { for (let i = 0; i < 40; i++) yield Buffer.from([9, i]); };
+    env.deps.synthesize = async function* () { for (let i = 0; i < 25; i++) yield Buffer.from([9, i]); };
     const sleep = env.deps.sleep;
     env.deps.sleep = async (ms) => {
       if (env.sleeps.length === 2 && abortAt < 0) {
@@ -331,7 +347,7 @@ describe('Session', () => {
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
     utter(s, env);
     await s.drain();
-    expect(env.bins).toHaveLength(40);
+    expect(env.bins).toHaveLength(25);
     expect(abortAt).toBeGreaterThanOrEqual(0);
     const stopIdx = env.sent.findIndex(m => m.type === 'tts' && m.state === 'stop');
     expect(stopIdx).toBeGreaterThan(0);

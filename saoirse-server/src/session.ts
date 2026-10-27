@@ -28,8 +28,14 @@ export interface SessionDeps {
 
 type State = 'idle' | 'listening' | 'processing' | 'speaking';
 
-/** How many frames we may run ahead of real time when streaming TTS (firmware buffers 80). */
-export const MAX_LEAD_FRAMES = 50;
+/**
+ * The robot's decode queue holds 2400 ms of audio (xiaozhi audio_service.h:
+ * MAX_DECODE_PACKETS_IN_QUEUE = 2400 / 60 = 40 frames) and PushPacketToDecodeQueue
+ * drops anything beyond that silently (wait = false). Running ahead of it clips speech.
+ */
+export const DEVICE_DECODE_QUEUE_FRAMES = 40;
+/** How many frames we may run ahead of real time when streaming TTS: well inside the device queue, leaving room for jitter. */
+export const MAX_LEAD_FRAMES = 30;
 
 /** Leading `[emotion]` tag plus the whitespace after it (same shape `extractEmotion` accepts). */
 const TAG_PREFIX = /^\s*\[[a-z]+\]\s*/i;
