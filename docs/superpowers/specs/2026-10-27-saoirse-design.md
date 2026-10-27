@@ -159,3 +159,15 @@ Project `saoirse-server` on the owner's account, Node 22, Fluid compute on, `max
 - Energy VAD vs. noisy rooms: thresholds in env; `listen stop` from the device still works if a future firmware sends it.
 - LLM ignores the emotion tag: default to neutral; the face still works.
 - Flash recovery: the bootloader is untouched; M5Burner restores stock firmware.
+
+## As built (2026-10-27, after live testing)
+
+Values that differ from the sections above, with the reason:
+
+- Audio to the robot is 24 kHz Opus (hello `sample_rate` 24000), not 16 kHz: the CoreS3 speaker runs at 24 kHz and the firmware warned about resampling.
+- The server runs at most 30 frames ahead (`MAX_LEAD_FRAMES`), not 80: the firmware's decode queue holds 40 and drops the excess silently.
+- `tts stop` trails the send-time playback model by 500 ms; the echo guard is 250 ms (was 1.5 s); VAD silence is 1200 ms (was 800); a wake guard of 800 ms skips the robot's popup chime.
+- Production LLM is `openai/gpt-oss-120b` (persona adherence); the code default stays `openai/gpt-oss-20b`.
+- `DEVICE_TZ` is `Europe/London` in production.
+- The OTA check requires the `OTA_SECRET` query parameter when the secret is configured.
+- Robot tools (camera, head, lights) and the vision endpoint: see `2026-10-27-saoirse-camera-tools-design.md`.

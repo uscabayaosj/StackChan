@@ -17,6 +17,8 @@ export interface Config {
   fallbackLlm?: LlmConfig;
   elevenlabs: { apiKey: string; voiceId: string; ttsModel: string; sttModel: string };
   deviceToken: string;
+  /** Shared secret the robot appends to CONFIG_OTA_URL as `?k=`; empty disables the check (and warns). */
+  otaSecret: string;
   publicWsUrl: string;
   vad: { rmsThreshold: number; silenceMs: number; minSpeechMs: number; preRollMs: number };
   idleCloseMs: number;
@@ -109,6 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       sttModel: env.ELEVENLABS_STT_MODEL || 'scribe_v2',
     },
     deviceToken,
+    otaSecret: env.OTA_SECRET || '',
     publicWsUrl: req(env, 'PUBLIC_WS_URL'),
     vad: {
       rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.025),

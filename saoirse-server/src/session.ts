@@ -96,6 +96,17 @@ export class Session {
   private listenGuardUntil = -Infinity;
   /** Loudest frame of the utterance being captured, for the log. */
   private utterPeakRms = 0;
+  /**
+   * The robot plays its popup chime into the open microphone when it starts listening after a wake
+   * word: the first `listen start` after hello, the one after a barge-in, and a `listen start` that
+   * arrives while we are already listening (wake word heard while listening). Not the one after a
+   * reply that played out.
+   */
+  private guardNextListen = true;
+  /** A `listen start` has been applied for the current listening period. */
+  private listenStarted = false;
+  /** A `listen start` that arrived mid-turn, applied when the turn ends. */
+  private listenPending: { afterWake: boolean } | null = null;
   private abortRequested = false;
   /** Cancels the in-flight turn's STT/LLM/TTS calls. */
   private turnAbort: AbortController | null = null;
@@ -143,6 +154,8 @@ export class Session {
   private requestAbort(): void {
     this.abortRequested = true;
     this.turnAbort?.abort();
+    // A barge-in makes the robot chime when it starts listening again.
+    this.guardNextListen = true;
   }
 
   /** Called periodically (every second) by the transport. */
@@ -174,11 +187,17 @@ export class Session {
         break;
       case 'listen':
         if (msg.mode === 'auto' || msg.mode === 'manual' || msg.mode === 'realtime') this.mode = msg.mode;
-        if (msg.state === 'start' || msg.state === 'detect') {
+        if (msg.state === 'detect') {
+          // Wake word: the robot already streamed the wake-word audio (dropped while idle, discarded here otherwise).
+          this.wakeDetectedAt = this.deps.now();
+          this.guardNextListen = true;
+          if (this.state === 'idle' || this.state === 'listening') { this.state = 'listening'; this.resetCapture(); }
+        } else if (msg.state === 'start') {
           const now = this.deps.now();
-          if (msg.state === 'detect') this.wakeDetectedAt = now;
-          const afterWake = msg.state === 'start' && now - this.wakeDetectedAt < 5_000;
+          const afterWake = this.guardNextListen || now - this.wakeDetectedAt < 5_000 || (this.state === 'listening' && this.listenStarted);
+          this.listenStarted = true;
           if (this.state === 'idle' || this.state === 'listening') this.startListening(afterWake);
+          else this.listenPending = { afterWake }; // mid-turn (e.g. right after a barge-in): applied when the turn unwinds
         } else if (msg.state === 'stop') {
           if (this.state === 'listening' && this.pcmChunks.length > 0) this.startProcessing();
         }
@@ -224,6 +243,7 @@ export class Session {
   private startListening(afterWake = false): void {
     this.state = 'listening';
     const now = this.deps.now();
+    this.guardNextListen = false;
     // After a wake word the robot plays its popup chime into an open microphone; don't transcribe it.
     this.listenGuardUntil = afterWake ? now + this.deps.config.wakeGuardMs : -Infinity;
     this.deps.log(`listening (mode=${this.mode}${afterWake ? `, wake guard ${this.deps.config.wakeGuardMs} ms` : ''})`);
@@ -253,7 +273,14 @@ export class Session {
     }).finally(() => {
       this.running = null;
       if (this.turnAbort === turn) this.turnAbort = null;
-      if (!this.disposed && this.state !== 'idle') this.state = 'listening';
+      this.listenStarted = false;
+      // After a reply that played out the robot re-enters listening without a chime; after a barge-in it chimes.
+      if (!this.abortRequested) this.guardNextListen = false;
+      if (this.disposed || this.state === 'idle') return;
+      const pending = this.listenPending;
+      this.listenPending = null;
+      if (pending) { this.listenStarted = true; this.startListening(pending.afterWake); }
+      else this.state = 'listening';
     });
   }
 
@@ -332,13 +359,34 @@ export class Session {
         calls = null;
         const tools = this.mcp.toolSpecs();
         let roundText = '';
+        // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
+        // the face and is never spoken. The tag can be split across chunks, so hold text until it is decided.
+        let roundHold = '';
+        let roundTagDecided = round === 1;
         for await (const ev of this.deps.chat(working, signal, tools.length > 0 ? tools : undefined)) {
           if (this.abortRequested) break;
           const event: ChatEvent = typeof ev === 'string' ? { type: 'text', text: ev } : ev;
-          if (event.type === 'text') { roundText += event.text; await handleChunk(event.text); }
-          else calls = event.calls;
+          if (event.type !== 'text') { calls = event.calls; continue; }
+          let text = event.text;
+          if (!roundTagDecided) {
+            roundHold += text;
+            if (!roundHold.trim()) continue;
+            if (/^\s*\[/.test(roundHold) && !/\]/.test(roundHold)) continue;
+            roundTagDecided = true;
+            if (TAG_PREFIX.test(roundHold)) {
+              const { emotion } = extractEmotion(roundHold);
+              this.socket.sendText({ session_id: this.sessionId, type: 'llm', emotion, text: '' });
+              emotionSent = true;
+            }
+            text = stripTag(roundHold);
+            if (!text) continue;
+          }
+          roundText += text;
+          await handleChunk(text);
         }
         if (this.abortRequested || !calls) break;
+        // Nothing to feed the results back into: don't run the robot for a reply that cannot follow.
+        if (round === MAX_TOOL_ROUNDS) break;
         // What the model said before asking for tools is heard first; a photo gets a filler if it said nothing.
         await flushText();
         if (!/\s$/.test(full)) full += ' ';
@@ -384,6 +432,7 @@ export class Session {
     for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {}; } catch { out.push({ id: call.id, text: 'Error: tool arguments were not valid JSON' }); continue; }
+      if (!args || typeof args !== 'object' || Array.isArray(args)) { out.push({ id: call.id, text: 'Error: tool arguments must be a JSON object' }); continue; }
       const isCamera = call.name === CAMERA_TOOL;
       const timeoutMs = isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
       let text: string;

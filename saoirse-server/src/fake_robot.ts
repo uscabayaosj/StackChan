@@ -59,6 +59,9 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
 
     const sendAudio = async (sessionId: string) => {
       ws.send(JSON.stringify({ session_id: sessionId, type: 'listen', state: 'start', mode: 'auto' }));
+      // The first listen start after hello is a wake word on the real robot: it plays a chime and the server
+      // ignores the microphone for WAKE_GUARD_MS. Wait like a person would.
+      await sleep(1000);
       for (const f of frames) { ws.send(f, { binary: true }); await sleep(FRAME_MS); }
       const silent = mic.encodeFrame(Buffer.alloc(FRAME_BYTES));
       for (let i = 0; i < SILENT_FRAMES; i++) { ws.send(silent, { binary: true }); await sleep(FRAME_MS); }

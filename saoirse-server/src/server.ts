@@ -1,5 +1,4 @@
 import http from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config } from './config.js';
 import { createCodec, type OpusCodec } from './opus.js';
@@ -7,6 +6,7 @@ import { transcribe } from './stt.js';
 import { streamChatEventsWithFallback, type ChatMessage } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
 import { handleVision } from './vision.js';
+import { bearerMatches, secretMatches } from './auth.js';
 import { Session, type SessionDeps, type SessionSocket } from './session.js';
 import { callWithDeadline, streamWithDeadline } from './deadline.js';
 import { buildOtaResponse, deviceVersionFromBody } from './ota.js';
@@ -61,12 +61,6 @@ function safePathname(req: http.IncomingMessage): string | null {
   try { return new URL(req.url ?? '/', 'http://localhost').pathname; } catch { return null; }
 }
 
-/** Constant-time check of an Authorization header against the expected bearer token. */
-function bearerMatches(header: string, token: string): boolean {
-  const a = Buffer.from(header);
-  const b = Buffer.from(`Bearer ${token}`);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -87,6 +81,17 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 export async function handleOta(cfg: Config, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // The OTA reply hands out the WebSocket token, so the robot must present the shared secret from its URL.
+  if (cfg.otaSecret) {
+    let k = '';
+    try { k = new URL(req.url ?? '/', 'http://localhost').searchParams.get('k') ?? ''; } catch { /* hostile url: no secret */ }
+    if (!secretMatches(k, cfg.otaSecret)) {
+      console.warn(`[ota] refused device=${req.headers['device-id']}: missing or wrong secret`);
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden' }));
+      return;
+    }
+  }
   let body: unknown = {};
   try {
     body = JSON.parse((await readBody(req)) || '{}');
@@ -113,7 +118,8 @@ export function attachWebSocket(
   sharedDeps?: SessionDeps,
   codecFactory: () => OpusCodec = createCodec,
 ): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  // 16 KiB is far above any protocol frame (Opus packets are ~200 bytes, JSON a few hundred); ws defaults to 100 MiB.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
   server.on('upgrade', (req, socket, head) => {
     // A client reset between our 401 write and destroy() would otherwise be an unhandled 'error'.
     socket.on('error', () => {});
@@ -146,7 +152,8 @@ export function attachWebSocket(
       // Codec creation can throw (e.g. the opus wasm missing from a bundle); that must only cost this socket.
       if (!sharedDeps) codec = codecFactory();
       deps = sharedDeps ?? createDeps(cfg, codec);
-      session = new Session(sock, deps, deviceId, historyFor(deviceId));
+      // A client without a Device-Id gets no shared memory: 'unknown' would mix unrelated callers.
+      session = new Session(sock, deps, deviceId, deviceId === 'unknown' ? [] : historyFor(deviceId));
     } catch (err) {
       codec?.dispose?.();
       log(`setup failed for ${deviceId}: ${err instanceof Error ? err.message : String(err)}`);
@@ -172,6 +179,7 @@ export function attachWebSocket(
 
 export function createAppServer(cfg: Config, deps?: SessionDeps, codecFactory?: () => OpusCodec): http.Server {
   if (!cfg.deviceToken) console.warn('[server] SAOIRSE_DEVICE_TOKEN is empty: /api/ws accepts any client (auth off)');
+  if (!cfg.otaSecret) console.warn('[server] OTA_SECRET is empty: /api/ota hands the WebSocket token to any caller');
   const server = http.createServer((req, res) => {
     const pathname = safePathname(req);
     if (pathname === null) { res.writeHead(400, { Connection: 'close' }); res.end(); return; }

@@ -5,7 +5,7 @@ The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket p
 ## Endpoints
 
 - `POST /api/vision` — the robot's photo upload (multipart `question` + `file`, sent by its `self.camera.take_photo` tool). Same bearer token as the WebSocket. Answers `{"success":true,"text":…}` from the vision model.
-- `POST /api/ota` — the robot's boot check. Returns the WebSocket URL, the device token, server time and the robot's own firmware version (so no upgrade is offered).
+- `POST /api/ota?k=<OTA_SECRET>` — the robot's boot check (`OTA_SECRET` is required when set; the reply hands out the WebSocket token, so set it in production). Returns the WebSocket URL, the device token, server time and the robot's own firmware version (so no upgrade is offered).
 - `WS /api/ws` — one conversation session per connection. Requires `Authorization: Bearer <SAOIRSE_DEVICE_TOKEN>`. Locally the token is enforced only when `SAOIRSE_DEVICE_TOKEN` is set (leave it empty and the endpoint is open; the server logs a warning at startup). On Vercel (`VERCEL` set) an empty token is a startup error.
 
 ## Run locally

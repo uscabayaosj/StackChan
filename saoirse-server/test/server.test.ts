@@ -132,13 +132,17 @@ describe('createAppServer', () => {
   it('warns once at startup when SAOIRSE_DEVICE_TOKEN is empty (auth off), and not when it is set', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const open = createAppServer({ ...cfg, deviceToken: '' });
+      const open = createAppServer({ ...cfg, deviceToken: '', otaSecret: 's' });
       open.close();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0][0])).toMatch(/SAOIRSE_DEVICE_TOKEN.*empty/);
       warn.mockClear();
-      createAppServer(cfg).close();
+      createAppServer({ ...cfg, otaSecret: 's' }).close();
       expect(warn).not.toHaveBeenCalled();
+      // and the OTA secret has its own warning
+      createAppServer(cfg).close();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/OTA_SECRET.*empty/);
     } finally {
       warn.mockRestore();
     }
@@ -195,7 +199,7 @@ describe('createDeps deadlines', () => {
     for (let i = 0; i < FRAME_BYTES; i += 2) loud.writeInt16LE(6000, i);
     const codec: OpusCodec = { encodeFrame: p => p.subarray(0, 4), decode: () => loud };
     const logs: string[] = [];
-    const deps = { ...createDeps({ ...cfg, llmTimeoutMs: 50 }, codec, fetchImpl), log: (m: string) => { logs.push(m); } };
+    const deps = { ...createDeps({ ...cfg, llmTimeoutMs: 50, wakeGuardMs: 0 }, codec, fetchImpl), log: (m: string) => { logs.push(m); } };
     const sent: any[] = [];
     const sock: SessionSocket = { sendText: j => { sent.push(j); }, sendBinary: () => {}, close: () => {}, isOpen: true };
     const s = new Session(sock, deps, 'aa:31');

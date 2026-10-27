@@ -1,5 +1,6 @@
 import type http from 'node:http';
 import type { Config } from './config.js';
+import { bearerMatches } from './auth.js';
 
 export interface MultipartFile { name: string; filename: string; contentType: string; data: Buffer }
 export interface Multipart { fields: Record<string, string>; files: MultipartFile[] }
@@ -88,7 +89,11 @@ export function readBody(req: http.IncomingMessage, max: number): Promise<Buffer
     let tooLarge = false;
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (tooLarge) return;
+      if (tooLarge) {
+        // Drain up to twice the cap so the 413 can be delivered, then give up on the connection.
+        if (size > 2 * max) { req.destroy(); reject(new Error('too large')); }
+        return;
+      }
       if (size > max) { tooLarge = true; chunks = []; return; }
       chunks.push(c);
     });
@@ -103,7 +108,7 @@ export function readBody(req: http.IncomingMessage, max: number): Promise<Buffer
  */
 export async function handleVision(cfg: Config, req: http.IncomingMessage, res: http.ServerResponse, fetchImpl: typeof fetch = fetch): Promise<void> {
   const auth = req.headers.authorization ?? '';
-  if (cfg.deviceToken && auth !== `Bearer ${cfg.deviceToken}`) { reply(res, 401, { success: false, message: 'unauthorized' }); return; }
+  if (cfg.deviceToken && !bearerMatches(auth, cfg.deviceToken)) { reply(res, 401, { success: false, message: 'unauthorized' }); return; }
   const boundary = multipartBoundary(req.headers['content-type']);
   if (!boundary) { reply(res, 400, { success: false, message: 'expected multipart/form-data' }); return; }
   let body: Buffer;
