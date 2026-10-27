@@ -579,6 +579,10 @@ void StackChanAvatarDisplay::SetStateLight(uint8_t r, uint8_t g, uint8_t b)
 void StackChanAvatarDisplay::ApplyStateLight()
 {
     auto& stackchan = GetStackChan();
+    // A running happy flash owns the bars; its onDone applies the latest state colour.
+    if (neon_flash_modifier_id_ >= 0 && stackchan.getModifier(neon_flash_modifier_id_)) {
+        return;
+    }
     uint8_t r = state_light_[0], g = state_light_[1], b = state_light_[2];
     GetHAL().getUserLight(r, g, b);  // a requested colour wins over the state indicator
     stackchan.leftNeonLight().setDuration(0.3f);
@@ -595,8 +599,11 @@ void StackChanAvatarDisplay::StartHappyFlash()
         stackchan.removeModifier(neon_flash_modifier_id_);
     }
     std::vector<NeonFlashModifier::Rgb> colors = {{90, 0, 45}, {90, 60, 0}, {0, 80, 45}, {90, 0, 45}};
-    neon_flash_modifier_id_ = stackchan.addModifier(
-        std::make_unique<NeonFlashModifier>(std::move(colors), 180, [this]() { ApplyStateLight(); }));
+    // The pool reuses freed slots: forget the id when the flash ends, or a later remove could hit another modifier.
+    neon_flash_modifier_id_ = stackchan.addModifier(std::make_unique<NeonFlashModifier>(std::move(colors), 180, [this]() {
+        neon_flash_modifier_id_ = -1;
+        ApplyStateLight();
+    }));
 }
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)

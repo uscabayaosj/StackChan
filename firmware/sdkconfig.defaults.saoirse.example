@@ -1,3 +1,5 @@
-# Copy to sdkconfig.defaults.local (git-ignored) and fill in your saoirse-server host.
-CONFIG_OTA_URL="https://<your-deployment-host>/api/ota"
+# Copy to sdkconfig.defaults.local (git-ignored) and fill in your saoirse-server host and OTA_SECRET.
+CONFIG_OTA_URL="https://<your-saoirse-server-host>/api/ota?k=<OTA_SECRET>"
 CONFIG_STACKCHAN_SKIN_SAOIRSE=y
+# Send the wake word to the server (`listen detect`) so it can ignore the robot's popup chime.
+CONFIG_SEND_WAKE_WORD_DATA=y

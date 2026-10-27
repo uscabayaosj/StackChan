@@ -91,6 +91,7 @@ void Hal::xiaozhi_mcp_init()
 
             // Remember it so the listening/speaking indicator does not overwrite it; 0,0,0 clears.
             GetHAL().setUserLight(r, g, b);
+            // The board only ever builds this display type (hal_bridge.cc DISPLAY_TYPE).
             auto display = static_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
             if (display) {
                 display->ApplyStateLight();
