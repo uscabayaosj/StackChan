@@ -34,6 +34,13 @@ describe('opus', () => {
       const pcm = codec.decode(codec.encodeFrame(sine(FRAME_SAMPLES, amp)));
       expect(pcm.length).toBe(FRAME_BYTES);
     });
+    it('dispose frees the encoder; later use throws instead of touching freed memory; twice is harmless', () => {
+      const codec = createCodec('wasm');
+      codec.dispose?.();
+      codec.dispose?.();
+      expect(() => codec.encodeFrame(sine(FRAME_SAMPLES))).toThrow(/disposed/);
+      expect(() => codec.decode(Buffer.from([1, 2, 3]))).toThrow(/disposed/);
+    });
     it('rejects a frame that is not exactly FRAME_BYTES', () => {
       const codec = createCodec('wasm');
       expect(() => codec.encodeFrame(Buffer.alloc(100))).toThrow(RangeError);

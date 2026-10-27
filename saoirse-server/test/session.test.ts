@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Session, MAX_LEAD_FRAMES, type SessionDeps, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 import { FRAME_BYTES } from '../src/opus.js';
+import { SYSTEM_PROMPT } from '../src/persona.js';
 
 function makeEnv() {
   const sent: any[] = [];
@@ -287,12 +288,161 @@ describe('Session', () => {
     expect(env.sent.some(m => m.type === 'stt')).toBe(false);
   });
 
+  it('does not echo-guard the next utterance after a barge-in abort', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    let aborted = false;
+    env.deps.synthesize = async function* () {
+      for (let i = 0; i < 50; i++) {
+        yield Buffer.from([9, i]);
+        if (!aborted) { aborted = true; await s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' })); }
+      }
+    };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    env.advance(200); // well inside the 1.5 s echo guard
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'stt')).toHaveLength(2);
+  });
+
+  it('an abort during the final playback drain sends tts stop within one frame step', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    let abortAt = -1;
+    // 40 frames: below MAX_LEAD_FRAMES, so every sleep is the final drain (40 x 60 ms = 2.4 s ahead).
+    env.deps.chat = async function* () { yield '[happy] One sentence. '; };
+    env.deps.synthesize = async function* () { for (let i = 0; i < 40; i++) yield Buffer.from([9, i]); };
+    const sleep = env.deps.sleep;
+    env.deps.sleep = async (ms) => {
+      if (env.sleeps.length === 2 && abortAt < 0) {
+        abortAt = env.deps.now();
+        await s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' }));
+      }
+      await sleep(ms);
+    };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.bins).toHaveLength(40);
+    expect(abortAt).toBeGreaterThanOrEqual(0);
+    const stopIdx = env.sent.findIndex(m => m.type === 'tts' && m.state === 'stop');
+    expect(stopIdx).toBeGreaterThan(0);
+    expect(env.sentAt[stopIdx] - abortAt).toBeLessThanOrEqual(60);
+  });
+
+  it('a whitespace-only first chunk does not force neutral or speak the tag', async () => {
+    const env = makeEnv();
+    env.deps.chat = async function* () { yield '\n'; yield '[doubtful] '; yield 'No.'; };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'llm')).toEqual([expect.objectContaining({ emotion: 'doubtful' })]);
+    expect(env.sent.filter(m => m.state === 'sentence_start').map(m => m.text)).toEqual(['No.']);
+  });
+
+  it('dispose cancels an LLM call that only ends when its signal aborts, and logs the error', async () => {
+    const env = makeEnv();
+    let chatStarted!: () => void;
+    const started = new Promise<void>(r => { chatStarted = r; });
+    env.deps.chat = async function* (_messages, signal) {
+      chatStarted();
+      await new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(new Error('chat cancelled')), { once: true }));
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await started;
+    s.dispose();
+    await s.drain();
+    expect(env.logs).toContain('process error: chat cancelled');
+  });
+
+  it('passes the turn signal to transcribe, chat and synthesize, and aborts it on barge-in', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    const signals: AbortSignal[] = [];
+    const transcribe = env.deps.transcribe;
+    env.deps.transcribe = async (pcm, signal) => { signals.push(signal); return transcribe(pcm, signal); };
+    const chat = env.deps.chat;
+    env.deps.chat = (messages, signal) => { signals.push(signal); return chat(messages, signal); };
+    env.deps.synthesize = async function* (_text, signal) {
+      signals.push(signal);
+      yield Buffer.from([9]);
+      await s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' }));
+    };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(signals).toHaveLength(3);
+    expect(new Set(signals).size).toBe(1);
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it('logs a fetch cancelled by barge-in as an aborted turn, not a process error', async () => {
+    const env = makeEnv();
+    let s!: Session;
+    env.deps.synthesize = async function* (_text, signal) {
+      yield Buffer.from([9]);
+      await s.handleText(JSON.stringify({ type: 'abort', reason: 'wake_word_detected' }));
+      throw signal.reason;
+    };
+    s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.logs.some(l => l.startsWith('turn aborted ('))).toBe(true);
+    expect(env.logs.some(l => l.startsWith('process error'))).toBe(false);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
+  it('a timeout after tts start is logged as a process error and still sends tts stop', async () => {
+    const env = makeEnv();
+    env.deps.chat = async function* () { yield '[happy] Hi. '; throw new Error('LLM timed out after 15000 ms'); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.logs).toContain('process error: LLM timed out after 15000 ms');
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
+  it('appends the current local time in DEVICE_TZ to the system prompt', async () => {
+    const env = makeEnv();
+    env.deps.config = { ...env.deps.config, deviceTz: 'Asia/Manila' };
+    env.advance(Date.parse('2026-10-27T04:05:00Z'));
+    let system = '';
+    const chat = env.deps.chat;
+    env.deps.chat = (messages, signal) => { system = messages[0].content; return chat(messages, signal); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(system.startsWith(SYSTEM_PROMPT)).toBe(true);
+    expect(system.split('\n').at(-1)).toBe('Current local time: Tuesday, 27 October 2026, 12:05');
+  });
+
   it('trims history by whole user/assistant pairs', async () => {
     const env = makeEnv();
     env.deps.config = { ...env.deps.config, contextTurns: 1 };
     const seen: string[][] = [];
     const chat = env.deps.chat;
-    env.deps.chat = (messages) => { seen.push(messages.map(m => m.role)); return chat(messages); };
+    env.deps.chat = (messages, signal) => { seen.push(messages.map(m => m.role)); return chat(messages, signal); };
     const s = new Session(env.socket, env.deps, 'aa:bb', [{ role: 'user', content: 'old q' }, { role: 'assistant', content: 'old a' }]);
     await s.handleText(hello);
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));

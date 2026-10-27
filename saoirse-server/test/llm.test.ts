@@ -197,6 +197,23 @@ describe('streamChatWithFallback policy', () => {
   });
 });
 
+describe('streamChatWithFallback on an aborted signal', () => {
+  it('does not fall back when the signal was aborted, whatever the error name (e.g. a timeout)', async () => {
+    const calls: string[] = [];
+    const ac = new AbortController();
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      ac.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      throw ac.signal.reason;
+    }) as unknown as typeof fetch;
+    const run = async () => {
+      for await (const _ of streamChatWithFallback(cfg, { ...cfg, baseUrl: 'https://fb.test/v1' }, [{ role: 'user', content: 'hi' }], fetchImpl, { signal: ac.signal })) void _;
+    };
+    await expect(run()).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(calls).toEqual(['https://llm.test/v1/chat/completions']);
+  });
+});
+
 describe('reasoning-only streams', () => {
   const reasoning = (r: string) => JSON.stringify({ choices: [{ delta: { reasoning: r, content: '' } }] });
 

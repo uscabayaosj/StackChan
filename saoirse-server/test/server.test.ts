@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import WebSocket from 'ws';
 import net, { type AddressInfo } from 'node:net';
-import { createAppServer } from '../src/server.js';
-import { createCodec, type OpusCodec } from '../src/opus.js';
+import { createAppServer, createDeps } from '../src/server.js';
+import { createCodec, FRAME_BYTES, type OpusCodec } from '../src/opus.js';
+import { Session, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 
 const cfg = loadConfig({ LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'ws://x', SAOIRSE_DEVICE_TOKEN: 'tok' });
@@ -126,5 +127,85 @@ describe('createAppServer', () => {
     const out = await rawExchange(port, 'GET http://[ HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
     expect(out).not.toMatch(/101 Switching/);
     expect(await postOta(port)).toBe(200);
+  });
+
+  it('warns once at startup when SAOIRSE_DEVICE_TOKEN is empty (auth off), and not when it is set', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const open = createAppServer({ ...cfg, deviceToken: '' });
+      open.close();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/SAOIRSE_DEVICE_TOKEN.*empty/);
+      warn.mockClear();
+      createAppServer(cfg).close();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  function recordingCodec(disposed: number[]): () => OpusCodec {
+    return () => {
+      const c = createCodec('wasm');
+      return { ...c, dispose: () => { disposed.push(1); c.dispose?.(); } };
+    };
+  }
+
+  it('disposes the per-connection codec when the socket closes', async () => {
+    const disposed: number[] = [];
+    const port = await start(recordingCodec(disposed));
+    const ws = await connectAndHello(port, 'aa:21');
+    expect(disposed).toHaveLength(0);
+    ws.close();
+    await vi.waitFor(() => expect(disposed).toHaveLength(1));
+  });
+
+  it('disposes the codec when setup fails after it was created', async () => {
+    const disposed: number[] = [];
+    // A config without vad settings makes the Session constructor throw after the codec exists.
+    server = createAppServer({ ...cfg, vad: undefined as any }, undefined, recordingCodec(disposed));
+    await new Promise<void>(r => server!.listen(0, r));
+    const port = (server.address() as AddressInfo).port;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, { headers: { Authorization: 'Bearer tok', 'Device-Id': 'aa:22' } });
+    const code = await new Promise<number>(r => ws.on('close', c => r(c)));
+    expect(code).toBe(1011);
+    expect(disposed).toHaveLength(1);
+  });
+});
+
+describe('createDeps deadlines', () => {
+  it('times out an LLM stream that stalls after the first sentence: logged process error, tts stop still sent', async () => {
+    const enc = new TextEncoder();
+    const signals: AbortSignal[] = [];
+    const fetchImpl = (async (url: string, init: any) => {
+      const signal: AbortSignal = init.signal;
+      signals.push(signal);
+      if (url.endsWith('/speech-to-text')) return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+      if (url.includes('/text-to-speech/')) return new Response(new Uint8Array(FRAME_BYTES * 2), { status: 200 });
+      // LLM: one sentence, then the stream hangs until its signal aborts (like a real fetch body).
+      const body = new ReadableStream<Uint8Array>({
+        start(ctl) {
+          ctl.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: '[happy] Hi. ' } }] })}\n\n`));
+          signal.addEventListener('abort', () => ctl.error(signal.reason), { once: true });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+    const loud = Buffer.alloc(FRAME_BYTES);
+    for (let i = 0; i < FRAME_BYTES; i += 2) loud.writeInt16LE(6000, i);
+    const codec: OpusCodec = { encodeFrame: p => p.subarray(0, 4), decode: () => loud };
+    const logs: string[] = [];
+    const deps = { ...createDeps({ ...cfg, llmTimeoutMs: 50 }, codec, fetchImpl), log: (m: string) => { logs.push(m); } };
+    const sent: any[] = [];
+    const sock: SessionSocket = { sendText: j => { sent.push(j); }, sendBinary: () => {}, close: () => {}, isOpen: true };
+    const s = new Session(sock, deps, 'aa:31');
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'manual' }));
+    for (let i = 0; i < 6; i++) s.handleBinary(Buffer.from([1]));
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'stop' }));
+    await s.drain();
+    expect(logs).toContain('process error: LLM timed out after 50 ms');
+    expect(sent.filter(m => m.type === 'tts').map(m => m.state)).toEqual(['start', 'sentence_start', 'stop']);
+    expect(signals).toHaveLength(3);
+    expect(signals.every(sig => sig instanceof AbortSignal)).toBe(true);
   });
 });

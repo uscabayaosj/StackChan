@@ -9,6 +9,8 @@ export const FRAME_BYTES = FRAME_SAMPLES * 2; // 1920
 export interface OpusCodec {
   encodeFrame(pcm: Buffer): Buffer;
   decode(packet: Buffer): Buffer;
+  /** Release native/WASM resources; the codec must not be used afterwards. Safe to call twice. */
+  dispose?(): void;
 }
 
 const require = createRequire(import.meta.url);
@@ -28,6 +30,8 @@ function nativeCodec(): OpusCodec {
       return Buffer.from(enc.encode(pcm));
     },
     decode: (packet) => Buffer.from(enc.decode(packet)),
+    // The native encoder is freed by the garbage collector.
+    dispose: () => {},
   };
 }
 
@@ -35,12 +39,25 @@ function wasmCodec(): OpusCodec {
   const OpusScript = require('opusscript') as any;
   const enc = new OpusScript(SAMPLE_RATE, CHANNELS, OpusScript.Application.VOIP);
   enc.setBitrate(24000);
+  let disposed = false;
+  // opusscript lives in a WASM heap that is never garbage collected: delete() frees it.
+  // A late call (e.g. a TTS stream still unwinding after the socket closed) throws instead of using freed memory.
+  const live = () => { if (disposed) throw new Error('opus codec disposed'); };
   return {
     encodeFrame: (pcm) => {
+      live();
       assertFrame(pcm);
       return Buffer.from(enc.encode(pcm, FRAME_SAMPLES));
     },
-    decode: (packet) => Buffer.from(enc.decode(packet)),
+    decode: (packet) => {
+      live();
+      return Buffer.from(enc.decode(packet));
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      enc.delete();
+    },
   };
 }
 

@@ -7,6 +7,7 @@ import { transcribe } from './stt.js';
 import { streamChatWithFallback, type ChatMessage } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
 import { Session, type SessionDeps, type SessionSocket } from './session.js';
+import { callWithDeadline, streamWithDeadline } from './deadline.js';
 import { buildOtaResponse, deviceVersionFromBody } from './ota.js';
 
 /** Conversation history per device id, bounded: oldest-inserted device is evicted first. */
@@ -33,14 +34,21 @@ function historyFor(deviceId: string): ChatMessage[] {
 
 const sharedLog = (m: string): void => console.log(`[session] ${m}`);
 
-/** Build session deps. The Opus codec is stateful per stream, so pass a codec owned by one connection. */
-export function createDeps(cfg: Config, codec: OpusCodec = createCodec()): SessionDeps {
+/**
+ * Build session deps. The Opus codec is stateful per stream, so pass a codec owned by one connection.
+ * Every upstream call gets the turn's signal (barge-in / socket close) combined with its own deadline:
+ * STT per request, the LLM for the whole stream, TTS per sentence.
+ */
+export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchImpl: typeof fetch = fetch): SessionDeps {
   return {
     config: cfg,
     codec,
-    transcribe: (pcm) => transcribe(cfg.elevenlabs, pcm),
-    chat: (messages) => streamChatWithFallback(cfg.llm, cfg.fallbackLlm, messages),
-    synthesize: (text) => synthesizeToFrames(cfg.elevenlabs, text, codec),
+    transcribe: (pcm, signal) =>
+      callWithDeadline('STT', cfg.sttTimeoutMs, signal, s => transcribe(cfg.elevenlabs, pcm, fetchImpl, { signal: s })),
+    chat: (messages, signal) =>
+      streamWithDeadline('LLM', cfg.llmTimeoutMs, signal, s => streamChatWithFallback(cfg.llm, cfg.fallbackLlm, messages, fetchImpl, { signal: s })),
+    synthesize: (text, signal) =>
+      streamWithDeadline('TTS', cfg.ttsTimeoutMs, signal, s => synthesizeToFrames(cfg.elevenlabs, text, codec, fetchImpl, { signal: s })),
     now: () => Date.now(),
     sleep: (ms) => new Promise(r => setTimeout(r, ms)),
     log: sharedLog,
@@ -131,11 +139,15 @@ export function attachWebSocket(
     ws.on('error', err => log(`socket error ${err.message}`));
     let deps: SessionDeps;
     let session: Session;
+    // Only a codec this connection created is ours to free; injected shared deps own theirs.
+    let codec: OpusCodec | undefined;
     try {
       // Codec creation can throw (e.g. the opus wasm missing from a bundle); that must only cost this socket.
-      deps = sharedDeps ?? createDeps(cfg, codecFactory());
+      if (!sharedDeps) codec = codecFactory();
+      deps = sharedDeps ?? createDeps(cfg, codec);
       session = new Session(sock, deps, deviceId, historyFor(deviceId));
     } catch (err) {
+      codec?.dispose?.();
       log(`setup failed for ${deviceId}: ${err instanceof Error ? err.message : String(err)}`);
       try { ws.close(1011, 'server setup failed'); } catch { /* socket already gone */ }
       return;
@@ -146,12 +158,19 @@ export function attachWebSocket(
       if (isBinary) session.handleBinary(Buffer.from(data as Buffer));
       else void session.handleText(data.toString());
     });
-    ws.on('close', () => { clearInterval(timer); session.dispose(); deps.log(`closed ${deviceId}`); });
+    ws.on('close', () => {
+      clearInterval(timer);
+      session.dispose();
+      deps.log(`closed ${deviceId}`);
+      // Free the codec once the cancelled turn has unwound, so it is not freed under a running encode.
+      void session.drain().finally(() => codec?.dispose?.());
+    });
   });
   return wss;
 }
 
 export function createAppServer(cfg: Config, deps?: SessionDeps, codecFactory?: () => OpusCodec): http.Server {
+  if (!cfg.deviceToken) console.warn('[server] SAOIRSE_DEVICE_TOKEN is empty: /api/ws accepts any client (auth off)');
   const server = http.createServer((req, res) => {
     const pathname = safePathname(req);
     if (pathname === null) { res.writeHead(400, { Connection: 'close' }); res.end(); return; }

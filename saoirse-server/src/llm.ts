@@ -111,7 +111,8 @@ export async function* streamChatWithFallback(
     }
     return;
   } catch (err) {
-    const aborted = (err as { name?: string })?.name === 'AbortError';
+    // A caller abort or deadline (TimeoutError, custom reason) never earns a fallback attempt.
+    const aborted = (err as { name?: string })?.name === 'AbortError' || opts?.signal?.aborted === true;
     const retryable = err instanceof LlmHttpError ? err.status === 429 || err.status >= 500 : true;
     if (!fallback || !retryable || aborted || yielded) throw err;
     console.warn('[llm] primary failed, using fallback:', (err as Error).message);

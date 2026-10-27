@@ -13,9 +13,11 @@
     "fake-robot": "tsx scripts/fake-robot.ts"
   },
   "dependencies": {
-    "@discordjs/opus": "^0.10.0",
     "opusscript": "^0.1.1",
     "ws": "^8.22.0"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

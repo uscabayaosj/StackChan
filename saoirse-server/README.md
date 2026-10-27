@@ -5,7 +5,7 @@ The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket p
 ## Endpoints
 
 - `POST /api/ota` — the robot's boot check. Returns the WebSocket URL, the device token, server time and the robot's own firmware version (so no upgrade is offered).
-- `WS /api/ws` — one conversation session per connection. Requires `Authorization: Bearer <SAOIRSE_DEVICE_TOKEN>`; the token is enforced only when `SAOIRSE_DEVICE_TOKEN` is set (leave it empty and the endpoint is open).
+- `WS /api/ws` — one conversation session per connection. Requires `Authorization: Bearer <SAOIRSE_DEVICE_TOKEN>`. Locally the token is enforced only when `SAOIRSE_DEVICE_TOKEN` is set (leave it empty and the endpoint is open; the server logs a warning at startup). On Vercel (`VERCEL` set) an empty token is a startup error.
 
 ## Run locally
 
@@ -43,3 +43,6 @@ Then set `PUBLIC_WS_URL=wss://<your-host>/api/ws` and redeploy. To point the rob
 - `LLM_REASONING_EFFORT` (default `low`) and `LLM_MAX_TOKENS` (default 400): `gpt-oss-20b` is a reasoning model; without these it spends its whole budget thinking and says nothing. Set effort to `none` for non-OpenRouter backends.
 - `LLM_FALLBACK_*`: a second OpenAI-compatible model used only when the primary fails before producing any text. `LLM_FALLBACK_REASONING_EFFORT` defaults to `none` (no `reasoning` field is sent) because DeepSeek-style APIs can reject it with a non-retryable 400.
 - VAD: `VAD_RMS_THRESHOLD` (0.025), `VAD_SILENCE_MS` (800), `VAD_MIN_SPEECH_MS` (300).
+- Deadlines: `STT_TIMEOUT_MS` (10000, one transcription request), `LLM_TIMEOUT_MS` (15000, the whole reply stream including any fallback attempt), `TTS_TIMEOUT_MS` (10000, each sentence). Each bounds receiving the upstream response, not the time spent playing it out. A timeout ends the turn with a logged `process error` and, if speech had started, a `tts stop`. A barge-in (`abort`) or socket close cancels the turn's in-flight requests.
+- `DEVICE_TZ` (default `UTC`): the robot's IANA time zone, e.g. `Asia/Manila`. It sets the OTA `timezone_offset` (the robot's clock; Vercel itself runs in UTC) and the `Current local time:` line appended to the system prompt.
+- `@discordjs/opus` is an optional dependency (native codec, opt-in via `OPUS_CODEC=native`); `npm install --omit=optional` skips it.

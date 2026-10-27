@@ -70,4 +70,14 @@ describe('transcribe', () => {
     const fetchImpl = (async () => new Response('nope', { status: 401 })) as unknown as typeof fetch;
     await expect(transcribe({ apiKey: 'e', voiceId: 'v', ttsModel: 't', sttModel: 'scribe_v2' }, Buffer.alloc(10), fetchImpl)).rejects.toThrow(/401/);
   });
+  it('passes the abort signal to fetch', async () => {
+    let seen: AbortSignal | undefined;
+    const fetchImpl = (async (_u: string, init: any) => {
+      seen = init.signal;
+      return new Response(JSON.stringify({ text: 'x' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ac = new AbortController();
+    await transcribe({ apiKey: 'e', voiceId: 'v', ttsModel: 't', sttModel: 's' }, Buffer.alloc(10), fetchImpl, { signal: ac.signal });
+    expect(seen).toBe(ac.signal);
+  });
 });

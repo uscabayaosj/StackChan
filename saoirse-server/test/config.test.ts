@@ -50,6 +50,25 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, LLM_MAX_TOKENS: 'abc' })).toThrow(/LLM_MAX_TOKENS/);
     expect(() => loadConfig({ ...base, VAD_SILENCE_MS: 'Infinity' })).toThrow(/VAD_SILENCE_MS/);
   });
+  it('defaults the per-stage timeouts and the device time zone, and reads overrides', () => {
+    const c = loadConfig(base);
+    expect(c.sttTimeoutMs).toBe(10_000);
+    expect(c.llmTimeoutMs).toBe(15_000);
+    expect(c.ttsTimeoutMs).toBe(10_000);
+    expect(c.deviceTz).toBe('UTC');
+    const o = loadConfig({ ...base, STT_TIMEOUT_MS: '1', LLM_TIMEOUT_MS: '2', TTS_TIMEOUT_MS: '3', DEVICE_TZ: 'Asia/Manila' });
+    expect([o.sttTimeoutMs, o.llmTimeoutMs, o.ttsTimeoutMs, o.deviceTz]).toEqual([1, 2, 3, 'Asia/Manila']);
+  });
+  it('throws on an unknown DEVICE_TZ', () => {
+    expect(() => loadConfig({ ...base, DEVICE_TZ: 'Mars/Olympus' })).toThrow(/DEVICE_TZ/);
+  });
+  it('requires SAOIRSE_DEVICE_TOKEN on Vercel', () => {
+    expect(() => loadConfig({ ...base, VERCEL: '1', SAOIRSE_DEVICE_TOKEN: '' })).toThrow(/SAOIRSE_DEVICE_TOKEN/);
+    expect(loadConfig({ ...base, VERCEL: '1' }).deviceToken).toBe('t');
+  });
+  it('allows an empty device token locally (auth off)', () => {
+    expect(loadConfig({ ...base, SAOIRSE_DEVICE_TOKEN: '' }).deviceToken).toBe('');
+  });
   it('throws on a missing required key', () => {
     expect(() => loadConfig({ ...base, ELEVENLABS_API_KEY: '' })).toThrow(/ELEVENLABS_API_KEY/);
   });

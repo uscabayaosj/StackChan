@@ -4,6 +4,7 @@ import { FRAME_MS, rms, type OpusCodec } from './opus.js';
 import { EnergyVad } from './vad.js';
 import { SentenceAccumulator, extractEmotion } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
+import { formatLocalTime } from './clock.js';
 import type { ChatMessage } from './llm.js';
 
 export interface SessionSocket {
@@ -16,9 +17,10 @@ export interface SessionSocket {
 export interface SessionDeps {
   config: Config;
   codec: OpusCodec;
-  transcribe(pcm: Buffer): Promise<string>;
-  chat(messages: ChatMessage[]): AsyncGenerator<string>;
-  synthesize(text: string): AsyncGenerator<Buffer>;
+  /** Each call gets the turn's signal: aborted on barge-in (`abort`) and when the socket closes. */
+  transcribe(pcm: Buffer, signal: AbortSignal): Promise<string>;
+  chat(messages: ChatMessage[], signal: AbortSignal): AsyncGenerator<string>;
+  synthesize(text: string, signal: AbortSignal): AsyncGenerator<Buffer>;
   now(): number;
   sleep(ms: number): Promise<void>;
   log(msg: string): void;
@@ -53,6 +55,8 @@ export class Session {
   private startedAt: number;
   private ttsEndedAt = -Infinity;
   private abortRequested = false;
+  /** Cancels the in-flight turn's STT/LLM/TTS calls. */
+  private turnAbort: AbortController | null = null;
   private running: Promise<void> | null = null;
   private disposed = false;
   private closed = false;
@@ -77,7 +81,12 @@ export class Session {
 
   dispose(): void {
     this.disposed = true;
+    this.requestAbort();
+  }
+
+  private requestAbort(): void {
     this.abortRequested = true;
+    this.turnAbort?.abort();
   }
 
   /** Called periodically (every second) by the transport. */
@@ -114,7 +123,7 @@ export class Session {
         }
         break;
       case 'abort':
-        this.abortRequested = true;
+        this.requestAbort();
         break;
       case 'mcp':
         // Tool results are not used in this round; acknowledged silently.
@@ -166,21 +175,30 @@ export class Session {
     this.resetCapture();
     this.state = 'processing';
     this.abortRequested = false;
-    this.running = this.process(pcm).catch(err => this.deps.log(`process error: ${(err as Error).message}`)).finally(() => {
+    const turn = new AbortController();
+    this.turnAbort = turn;
+    this.running = this.process(pcm, turn.signal).catch(err => {
+      const msg = (err as Error).message;
+      // A barge-in cancels the turn's fetches on purpose; anything else (incl. timeouts, close) is an error.
+      this.deps.log(turn.signal.aborted && !this.disposed ? `turn aborted (${msg})` : `process error: ${msg}`);
+    }).finally(() => {
       this.running = null;
+      if (this.turnAbort === turn) this.turnAbort = null;
       if (!this.disposed && this.state !== 'idle') this.state = 'listening';
     });
   }
 
-  private async process(pcm: Buffer): Promise<void> {
-    const text = await this.deps.transcribe(pcm);
+  private async process(pcm: Buffer, signal: AbortSignal): Promise<void> {
+    const text = await this.deps.transcribe(pcm, signal);
     if (this.abortRequested || !this.socket.isOpen) return;
     if (!text) { this.deps.log('empty transcript'); return; }
     this.socket.sendText({ session_id: this.sessionId, type: 'stt', text });
     this.history.push({ role: 'user', content: text });
     this.trimHistory();
 
-    const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...this.history];
+    const localTime = formatLocalTime(new Date(this.deps.now()), this.deps.config.deviceTz);
+    const system = `${SYSTEM_PROMPT}\n\nCurrent local time: ${localTime}`;
+    const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.history];
     const acc = new SentenceAccumulator();
     let emotionSent = false;
     let ttsStarted = false;
@@ -203,7 +221,7 @@ export class Session {
       if (!ttsStarted) { this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'start' }); ttsStarted = true; this.state = 'speaking'; }
       this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'sentence_start', text: sentence });
       spoken.push(sentence);
-      for await (const frame of this.deps.synthesize(sentence)) {
+      for await (const frame of this.deps.synthesize(sentence, signal)) {
         if (this.abortRequested || !this.socket.isOpen) return;
         const lead = (playEnd - this.deps.now()) / FRAME_MS;
         if (lead > MAX_LEAD_FRAMES) {
@@ -219,7 +237,8 @@ export class Session {
       full += chunk;
       let delta = chunk;
       if (!emotionSent) {
-        // Wait until we can decide whether the reply starts with a tag.
+        // Wait until we can decide whether the reply starts with a tag (leading whitespace decides nothing).
+        if (!full.trim()) return;
         if (/^\s*\[/.test(full) && !/\]/.test(full)) return;
         delta = sendEmotion();
       }
@@ -227,7 +246,7 @@ export class Session {
     };
 
     try {
-      for await (const chunk of this.deps.chat(messages)) {
+      for await (const chunk of this.deps.chat(messages, signal)) {
         if (this.abortRequested) break;
         await handleChunk(chunk);
       }
@@ -241,12 +260,17 @@ export class Session {
       }
     } finally {
       if (ttsStarted && this.socket.isOpen) {
-        // Let the device play out what we sent ahead of real time before announcing the end.
-        const remaining = playEnd - this.deps.now();
-        if (remaining > 0 && !this.abortRequested) await this.deps.sleep(remaining);
+        // Let the device play out what we sent ahead of real time before announcing the end,
+        // one frame at a time so a barge-in during the drain stops it within a frame.
+        let remaining: number;
+        while (!this.abortRequested && this.socket.isOpen && (remaining = playEnd - this.deps.now()) > 0) {
+          await this.deps.sleep(Math.min(FRAME_MS, remaining));
+        }
         if (this.socket.isOpen) {
           this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'stop' });
-          this.ttsEndedAt = this.deps.now();
+          // Echo guard only after a reply that played out; after an abort the device already
+          // stopped playing, and the utterance that interrupted it must not be dropped.
+          if (!this.abortRequested) this.ttsEndedAt = this.deps.now();
         }
       }
       // A finished reply is stored whole; an aborted or failed one only as far as it was spoken.

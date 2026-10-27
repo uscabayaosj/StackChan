@@ -1,9 +1,10 @@
 import type { Config } from './config.js';
+import { timezoneOffsetMinutes } from './clock.js';
 
 export function buildOtaResponse(cfg: Config, deviceVersion: string | undefined, now: Date): object {
   return {
     websocket: { url: cfg.publicWsUrl, token: cfg.deviceToken, version: 1 },
-    server_time: { timestamp: now.getTime(), timezone_offset: -now.getTimezoneOffset() },
+    server_time: { timestamp: now.getTime(), timezone_offset: timezoneOffsetMinutes(cfg.deviceTz, now) },
     firmware: { version: deviceVersion || '0.0.0', url: '' },
   };
 }
