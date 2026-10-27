@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/ws.ts": { "maxDuration": 300 },
+    "api/ota.ts": { "maxDuration": 10 }
+  }
+}
