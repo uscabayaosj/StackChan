@@ -496,8 +496,9 @@ private:
 
 class SaoirseAvatar : public Avatar {
 public:
+    ~SaoirseAvatar() override;  // destroys features/decorators before the panel (LVGL wrappers delete unconditionally)
     void init(lv_obj_t* parent, const lv_font_t* font = &lv_font_montserrat_16) override;
-    uitk::lvgl_cpp::Container* getPanel() const override;
+    uitk::lvgl_cpp::Container* getPanel() const override;  // never null after init(): two call sites dereference it
 
 private:
     lv_image_dsc_t _base_dsc{};
@@ -895,6 +896,14 @@ void SaoirseAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _key_elements.mouth    = std::make_unique<SaoirseMouth>(_panel->get());
     _key_elements.speechBubble = std::make_unique<DefaultSpeechBubble>(
         _panel->get(), lv_color_hex(kBubbleBg), lv_color_hex(kBubbleFg), font);
+}
+
+SaoirseAvatar::~SaoirseAvatar()
+{
+    // Features and decorators own LVGL children of the panel: destroy them while the
+    // panel is still alive; then _base and _panel (members) are destroyed in order.
+    _key_elements = KeyElements_t{};
+    _decorator_pool.clear();
 }
 
 Container* SaoirseAvatar::getPanel() const
