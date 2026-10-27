@@ -579,10 +579,12 @@ void StackChanAvatarDisplay::SetStateLight(uint8_t r, uint8_t g, uint8_t b)
 void StackChanAvatarDisplay::ApplyStateLight()
 {
     auto& stackchan = GetStackChan();
+    uint8_t r = state_light_[0], g = state_light_[1], b = state_light_[2];
+    GetHAL().getUserLight(r, g, b);  // a requested colour wins over the state indicator
     stackchan.leftNeonLight().setDuration(0.3f);
     stackchan.rightNeonLight().setDuration(0.3f);
-    stackchan.leftNeonLight().setColor(state_light_[0], state_light_[1], state_light_[2]);
-    stackchan.rightNeonLight().setColor(state_light_[0], state_light_[1], state_light_[2]);
+    stackchan.leftNeonLight().setColor(r, g, b);
+    stackchan.rightNeonLight().setColor(r, g, b);
 }
 
 // A happy emotion flashes the bars pink, gold, mint, pink, then returns to the state colour.

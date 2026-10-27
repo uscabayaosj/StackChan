@@ -236,6 +236,28 @@ public:
     void showRgbColor(uint8_t r, uint8_t g, uint8_t b);
     void refreshRgb();
 
+    /**
+     * A light colour the user asked for (robot.set_led_color). While set, the light bars show it instead
+     * of the listening/speaking state colours; 0,0,0 clears it.
+     */
+    void setUserLight(uint8_t r, uint8_t g, uint8_t b)
+    {
+        _user_light_set = !(r == 0 && g == 0 && b == 0);
+        _user_light[0]  = r;
+        _user_light[1]  = g;
+        _user_light[2]  = b;
+    }
+    bool getUserLight(uint8_t& r, uint8_t& g, uint8_t& b) const
+    {
+        if (!_user_light_set) {
+            return false;
+        }
+        r = _user_light[0];
+        g = _user_light[1];
+        b = _user_light[2];
+        return true;
+    }
+
     /* ---------------------------------- Power --------------------------------- */
     void setServoPowerEnabled(bool enabled);
 
@@ -304,6 +326,9 @@ public:
     void clearupMicTest();
 
 private:
+    bool _user_light_set    = false;
+    uint8_t _user_light[3] = {0, 0, 0};
+
     bool _xiaozhi_start_requested = false;
 
     void xiaozhi_board_init();

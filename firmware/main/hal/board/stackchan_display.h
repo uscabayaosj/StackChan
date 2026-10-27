@@ -24,8 +24,13 @@ private:
     uint8_t state_light_[3]             = {0, 0, 0};
 
     void SetStateLight(uint8_t r, uint8_t g, uint8_t b);
-    void ApplyStateLight();
     void StartHappyFlash();
+
+public:
+    /** Shows the user's requested light colour if set (robot.set_led_color), else the state colour. */
+    void ApplyStateLight();
+
+private:
     uint8_t idle_motion_level_          = 2;
 
     lv_obj_t* preview_image_                         = nullptr;

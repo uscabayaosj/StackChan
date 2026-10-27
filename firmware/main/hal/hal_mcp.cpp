@@ -8,6 +8,8 @@
 #include <mcp_server.h>
 #include <stackchan/stackchan.h>
 #include <apps/common/common.h>
+#include <board.h>
+#include "board/stackchan_display.h"
 
 using namespace stackchan;
 
@@ -72,8 +74,9 @@ void Hal::xiaozhi_mcp_init()
     mclog::tagInfo(_tag, "add robot.set_led_color tool");
     mcp_server.AddTool(
         "self.robot.set_led_color",
-        "Set the color of the robot's INTERNAL onboard LED. This is NOT for room lights. "
-        "Values: 0-168 (safe range). Red=168,0,0; Green=0,168,0; Blue=0,0,168; White=100,100,100; Off=0,0,0.",
+        "Set the colour of the robot's own two light bars (not room lights). The colour stays until changed. "
+        "Values: 0-168 per channel. Red=168,0,0; Green=0,168,0; Blue=0,0,168; White=100,100,100. "
+        "0,0,0 returns the bars to their normal listening/speaking colours.",
         PropertyList({Property("red", kPropertyTypeInteger, 0, 0, 168),
                       Property("green", kPropertyTypeInteger, 0, 0, 168),
                       Property("blue", kPropertyTypeInteger, 0, 0, 168)}),
@@ -86,8 +89,15 @@ void Hal::xiaozhi_mcp_init()
 
             LvglLockGuard lock;
 
-            GetStackChan().leftNeonLight().setColor(r, g, b);
-            GetStackChan().rightNeonLight().setColor(r, g, b);
+            // Remember it so the listening/speaking indicator does not overwrite it; 0,0,0 clears.
+            GetHAL().setUserLight(r, g, b);
+            auto display = static_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
+            if (display) {
+                display->ApplyStateLight();
+            } else {
+                GetStackChan().leftNeonLight().setColor(r, g, b);
+                GetStackChan().rightNeonLight().setColor(r, g, b);
+            }
 
             return true;
         });
