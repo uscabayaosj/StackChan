@@ -48,9 +48,17 @@ let warnedNativeUnavailable = false;
 
 export type CodecKind = 'auto' | 'native' | 'wasm';
 
+/**
+ * 'auto' resolves to the WASM codec (opusscript) unless OPUS_CODEC=native.
+ * The native @discordjs/opus encoder is faster, but 0.10.0 segfaults the whole
+ * Node process (uncatchable, exit 139) on quiet audio on macOS arm64, so it is
+ * opt-in only. If native was requested via the env var and fails to load, we
+ * warn once and fall back to WASM. Explicit 'native' / 'wasm' are honoured as is.
+ */
 export function createCodec(kind: CodecKind = 'auto'): OpusCodec {
   if (kind === 'native') return nativeCodec();
   if (kind === 'wasm') return wasmCodec();
+  if (process.env.OPUS_CODEC !== 'native') return wasmCodec();
   try {
     return nativeCodec();
   } catch (err) {
