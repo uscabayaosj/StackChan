@@ -8,6 +8,14 @@
 using namespace uitk::lvgl_cpp;
 using namespace stackchan::avatar;
 
+DefaultAvatar::~DefaultAvatar()
+{
+    // Features and decorators own LVGL children of the panel: destroy them while the
+    // panel is still alive, then the panel (member destructor) removes itself.
+    _key_elements = KeyElements_t{};
+    _decorator_pool.clear();
+}
+
 void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
 {
     _pannel = std::make_unique<Container>(parent);

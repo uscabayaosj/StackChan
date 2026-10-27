@@ -18,6 +18,8 @@ namespace stackchan::avatar {
  */
 class DefaultAvatar : public Avatar {
 public:
+    ~DefaultAvatar() override;
+
     lv_color_t primaryColor   = lv_color_white();
     lv_color_t secondaryColor = lv_color_black();
 

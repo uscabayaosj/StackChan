@@ -18,6 +18,7 @@ namespace stackchan::avatar {
  */
 class Avatar {
 public:
+    // Skins must destroy their features before their panel; see DefaultAvatar::~DefaultAvatar
     virtual ~Avatar() = default;
 
     /** Build the LVGL objects under parent. Skins override this. */
