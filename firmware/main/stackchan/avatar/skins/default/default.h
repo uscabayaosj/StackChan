@@ -77,9 +77,15 @@ private:
  * @brief
  *
  */
+struct SpeechBubbleLayout {
+    int containerOffsetY = 89;     // LV_ALIGN_CENTER y offset of the 320x74 container
+    bool arrowBelow      = false;  // true: pill on top, arrow under it pointing down
+};
+
 class DefaultSpeechBubble : public SpeechBubble {
 public:
-    DefaultSpeechBubble(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t secondaryColor, const lv_font_t* font);
+    DefaultSpeechBubble(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t secondaryColor, const lv_font_t* font,
+                        SpeechBubbleLayout layout = {});
     ~DefaultSpeechBubble();
 
     void setSpeech(std::string_view text) override;

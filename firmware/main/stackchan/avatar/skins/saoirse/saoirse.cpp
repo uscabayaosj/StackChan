@@ -26,8 +26,12 @@ void SaoirseAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _key_elements.leftEye  = std::make_unique<SaoirseEyes>(_panel->get(), true);
     _key_elements.rightEye = std::make_unique<SaoirseEyes>(_panel->get(), false);
     _key_elements.mouth    = std::make_unique<SaoirseMouth>(_panel->get());
-    _key_elements.speechBubble = std::make_unique<DefaultSpeechBubble>(
-        _panel->get(), lv_color_hex(kBubbleBg), lv_color_hex(kBubbleFg), font);
+    // Caption band at the top of the screen (y 0..74) so it never covers the talking mouth.
+    SpeechBubbleLayout bubbleLayout;
+    bubbleLayout.containerOffsetY = -83;  // centre y 37 -> container y 0..74
+    bubbleLayout.arrowBelow       = true;
+    _key_elements.speechBubble    = std::make_unique<DefaultSpeechBubble>(
+        _panel->get(), lv_color_hex(kBubbleBg), lv_color_hex(kBubbleFg), font, bubbleLayout);
 }
 
 SaoirseAvatar::~SaoirseAvatar()

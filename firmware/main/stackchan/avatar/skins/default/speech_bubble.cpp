@@ -9,7 +9,6 @@ using namespace uitk;
 using namespace uitk::lvgl_cpp;
 using namespace stackchan::avatar;
 
-static const Vector2i _container_pos  = Vector2i(0, 89);
 static const Vector2i _container_size = Vector2i(320, 74);
 static const Vector2i _arrow_offset   = Vector2i(40, -15);
 static const int _text_mx             = 20;
@@ -22,7 +21,7 @@ static const int _bubble_max_offset_x = 0;
 LV_IMAGE_DECLARE(default_bubble_arrow);
 
 DefaultSpeechBubble::DefaultSpeechBubble(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t secondaryColor,
-                                         const lv_font_t* font)
+                                         const lv_font_t* font, SpeechBubbleLayout layout)
 {
     _container = std::make_unique<Container>(parent);
     _container->setRadius(0);
@@ -31,13 +30,19 @@ DefaultSpeechBubble::DefaultSpeechBubble(lv_obj_t* parent, lv_color_t primaryCol
     _container->setBgOpa(0);
     _container->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
     _container->setSize(_container_size.x, _container_size.y);
-    _container->setPos(_container_pos.x, _container_pos.y);
+    _container->setPos(0, layout.containerOffsetY);
     _container->setPadding(0, 0, 0, 0);
 
     _arrow = std::make_unique<Image>(_container->get());
     _arrow->setSrc(&default_bubble_arrow);
     _arrow->setAlign(LV_ALIGN_CENTER);
-    _arrow->setPos(_arrow_offset.x, _arrow_offset.y);
+    if (layout.arrowBelow) {
+        _arrow->setPos(_arrow_offset.x, -_arrow_offset.y);
+        _arrow->setPivot(default_bubble_arrow.header.w / 2, default_bubble_arrow.header.h / 2);
+        _arrow->setRotation(1800);
+    } else {
+        _arrow->setPos(_arrow_offset.x, _arrow_offset.y);
+    }
     _arrow->setImageRecolorOpa(LV_OPA_COVER);
     _arrow->setImageRecolor(primaryColor);
 
@@ -48,7 +53,7 @@ DefaultSpeechBubble::DefaultSpeechBubble(lv_obj_t* parent, lv_color_t primaryCol
     _bubble->setBgColor(primaryColor);
     _bubble->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
     _bubble->setSize(_bubble_max_width, _bubble_height);
-    _bubble->setPos(0, 11);
+    _bubble->setPos(0, layout.arrowBelow ? -11 : 11);
 
     _text = std::make_unique<Label>(_bubble->get());
     _text->setTextColor(secondaryColor);
