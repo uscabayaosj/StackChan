@@ -80,7 +80,7 @@ public:
                 _left_eye_weight  = stackchan.avatar().leftEye().getWeight();
                 _right_eye_weight = stackchan.avatar().rightEye().getWeight();
 
-                apply_eye_weights(stackchan, 25, 25);
+                apply_eye_weights(stackchan, kClosedWeight, kClosedWeight);
             } else {
                 // 闭眼 -> 睁眼
                 _state = State::OPEN;
@@ -88,12 +88,27 @@ public:
                 uint32_t jitter  = Random::getInstance().getInt(0, 500);
                 _next_state_tick = now + _open_interval_ms + jitter;
 
-                apply_eye_weights(stackchan, _left_eye_weight, _right_eye_weight);
+                // Restore each eye's saved weight only if it still holds the blink's
+                // closed weight. If anything else changed it during the blink (head-pet
+                // restore, TimedEmotionModifier end, ...) the new emotion owns the weight
+                // now, and restoring the stale one would leave the eye blank (e.g. lid
+                // closed with no iris/arc). No emotion in either skin uses weight 25, so
+                // the check is unambiguous. Applied per eye.
+                auto& left  = stackchan.avatar().leftEye();
+                auto& right = stackchan.avatar().rightEye();
+                if (left.getWeight() == kClosedWeight) {
+                    left.setWeight(_left_eye_weight);
+                }
+                if (right.getWeight() == kClosedWeight) {
+                    right.setWeight(_right_eye_weight);
+                }
             }
         }
     }
 
 private:
+    static constexpr int kClosedWeight = 25;
+
     enum class State { OPEN, CLOSED };
 
     void apply_eye_weights(Modifiable& stackchan, int left, int right)
