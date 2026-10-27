@@ -1,7 +1,7 @@
 export const EMOTIONS = ['neutral', 'happy', 'angry', 'sad', 'doubtful', 'sleepy'] as const;
 export type Emotion = (typeof EMOTIONS)[number];
 
-const ABBREVIATIONS = ['e.g.', 'i.e.', 'etc.', 'mr.', 'mrs.', 'ms.', 'dr.', 'vs.', 'st.'];
+const ABBREVIATIONS = ['e.g.', 'i.e.', 'etc.', 'mr.', 'mrs.', 'ms.', 'dr.', 'vs.', 'st.', 'a.m.', 'p.m.'];
 
 /** Accumulates streamed LLM text and yields complete sentences. */
 export class SentenceAccumulator {

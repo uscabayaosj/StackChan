@@ -32,3 +32,16 @@ describe('extractEmotion', () => {
     expect(extractEmotion('[smug] Hi')).toEqual({ emotion: 'neutral', rest: 'Hi' });
   });
 });
+
+describe('SentenceAccumulator clock abbreviations', () => {
+  it('does not split "a.m." / "p.m." from the words after them', () => {
+    const acc = new SentenceAccumulator();
+    expect(acc.push("It's 4:51 a.m. today. ")).toEqual(["It's 4:51 a.m. today."]);
+    expect(acc.push('Lunch is at 12 p.m. sharp, apparently. Go. ')).toEqual(['Lunch is at 12 p.m. sharp, apparently.', 'Go.']);
+  });
+  it('keeps "a.m." joined to a following capitalised word, like the other abbreviations', () => {
+    const acc = new SentenceAccumulator();
+    expect(acc.push("Wake me at 6 a.m. That's all.")).toEqual([]);
+    expect(acc.flush()).toBe("Wake me at 6 a.m. That's all.");
+  });
+});
