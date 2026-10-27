@@ -14,9 +14,11 @@ describe('timezoneOffsetMinutes', () => {
 });
 
 describe('formatLocalTime', () => {
-  it('formats weekday, date and 24-hour HH:MM in the given zone', () => {
-    expect(formatLocalTime(new Date('2026-10-27T04:05:00Z'), 'Asia/Manila')).toBe('Tuesday, 27 October 2026, 12:05');
-    expect(formatLocalTime(new Date('2026-10-27T00:30:00Z'), 'UTC')).toBe('Tuesday, 27 October 2026, 00:30');
+  it('formats weekday, date, 24-hour HH:MM and the zone name in the given zone', () => {
+    expect(formatLocalTime(new Date('2026-10-27T04:05:00Z'), 'Asia/Manila')).toBe('Tuesday, 27 October 2026, 12:05 GMT+8');
+    expect(formatLocalTime(new Date('2026-10-27T00:30:00Z'), 'UTC')).toBe('Tuesday, 27 October 2026, 00:30 UTC');
+    expect(formatLocalTime(new Date('2026-10-27T21:36:00Z'), 'Europe/London')).toBe('Tuesday, 27 October 2026, 21:36 GMT');
+    expect(formatLocalTime(new Date('2026-07-15T12:00:00Z'), 'Europe/London')).toBe('Wednesday, 15 July 2026, 13:00 GMT+1');
   });
 });
 

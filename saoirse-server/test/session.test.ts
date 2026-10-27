@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, type SessionDeps, type SessionSocket } from '../src/session.js';
+import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, TTS_STOP_MARGIN_MS, type SessionDeps, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 import { FRAME_BYTES } from '../src/opus.js';
 import { SYSTEM_PROMPT } from '../src/persona.js';
@@ -182,7 +182,23 @@ describe('Session', () => {
     expect(env.sleeps[0].binsBefore).toBeLessThanOrEqual(MAX_LEAD_FRAMES + 1);
     const stopIdx = env.sent.findIndex(m => m.type === 'tts' && m.state === 'stop');
     expect(stopIdx).toBeGreaterThan(0);
-    expect(env.sentAt[stopIdx] - env.binAt[0]).toBeGreaterThanOrEqual(60 * 60);
+    // stop only after the last frame has played out on the robot, plus its pipeline latency margin
+    expect(env.sentAt[stopIdx] - env.binAt[0]).toBeGreaterThanOrEqual(60 * 60 + TTS_STOP_MARGIN_MS);
+  });
+
+  it('speaks the respelled name to the TTS voice but shows the real spelling on the robot', async () => {
+    const env = makeEnv();
+    const spoken: string[] = [];
+    env.deps.chat = async function* () { yield '[neutral] My name is Saoirse. '; };
+    env.deps.synthesize = async function* (text) { spoken.push(text); yield Buffer.from([9, 1]); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(spoken).toEqual(['My name is Seersha.']);
+    expect(env.sent.find(m => m.type === 'tts' && m.state === 'sentence_start').text).toBe('My name is Saoirse.');
+    expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'My name is Saoirse.' });
   });
 
   it('never has more frames outstanding than the robot can queue (excess is dropped silently on-device)', async () => {
@@ -450,7 +466,7 @@ describe('Session', () => {
     utter(s, env);
     await s.drain();
     expect(system.startsWith(SYSTEM_PROMPT)).toBe(true);
-    expect(system.split('\n').at(-1)).toBe('Current local time: Tuesday, 27 October 2026, 12:05');
+    expect(system.split('\n').at(-1)).toBe('Current local time: Tuesday, 27 October 2026, 12:05 GMT+8');
   });
 
   it('trims history by whole user/assistant pairs', async () => {

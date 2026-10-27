@@ -10,14 +10,14 @@ export function timezoneOffsetMinutes(timeZone: string, at: Date): number {
   return m[1] === '-' ? -minutes : minutes;
 }
 
-/** 'Tuesday, 27 October 2026, 12:05' for `at` in `timeZone`; built from parts so it does not depend on ICU phrasing. */
+/** 'Tuesday, 27 October 2026, 12:05 GMT+8' for `at` in `timeZone`; built from parts so it does not depend on ICU phrasing. The zone name stops the model inventing one. */
 export function formatLocalTime(at: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short',
   }).formatToParts(at);
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? '';
-  return `${get('weekday')}, ${get('day')} ${get('month')} ${get('year')}, ${get('hour')}:${get('minute')}`;
+  return `${get('weekday')}, ${get('day')} ${get('month')} ${get('year')}, ${get('hour')}:${get('minute')} ${get('timeZoneName')}`;
 }
 
 /** Throws a RangeError for a time zone name this runtime does not know. */

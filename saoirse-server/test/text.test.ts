@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SentenceAccumulator, extractEmotion } from '../src/text.js';
+import { SentenceAccumulator, extractEmotion, speechText } from '../src/text.js';
 
 describe('SentenceAccumulator', () => {
   it('emits sentences as tokens arrive and keeps the remainder', () => {
@@ -43,5 +43,14 @@ describe('SentenceAccumulator clock abbreviations', () => {
     const acc = new SentenceAccumulator();
     expect(acc.push("Wake me at 6 a.m. That's all.")).toEqual([]);
     expect(acc.flush()).toBe("Wake me at 6 a.m. That's all.");
+  });
+});
+
+describe('speechText', () => {
+  it('respells Saoirse for the voice, keeping case and possessives', () => {
+    expect(speechText("My name is Saoirse. Saoirse's bowl is empty, saoirse said.")).toBe("My name is Seersha. Seersha's bowl is empty, seersha said.");
+  });
+  it('leaves other text alone', () => {
+    expect(speechText('It is twenty to ten.')).toBe('It is twenty to ten.');
   });
 });

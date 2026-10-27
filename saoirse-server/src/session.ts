@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import { FRAME_MS, OUTPUT_SAMPLE_RATE, rms, type OpusCodec } from './opus.js';
 import { EnergyVad } from './vad.js';
-import { SentenceAccumulator, extractEmotion } from './text.js';
+import { SentenceAccumulator, extractEmotion, speechText } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
 import { formatLocalTime } from './clock.js';
 import type { ChatMessage } from './llm.js';
@@ -36,6 +36,13 @@ type State = 'idle' | 'listening' | 'processing' | 'speaking';
 export const DEVICE_DECODE_QUEUE_FRAMES = 40;
 /** How many frames we may run ahead of real time when streaming TTS: well inside the device queue, leaving room for jitter. */
 export const MAX_LEAD_FRAMES = 30;
+/**
+ * Hold `tts stop` back this long after our send-time model says playback ended. The robot's
+ * speaker runs behind that model (network, decode queue, two playback slots, I2S buffers), and on
+ * `stop` the firmware switches to listening and clears its audio queues after waiting only for the
+ * two-slot playback queue, so a stop that lands early clips the end of the reply.
+ */
+export const TTS_STOP_MARGIN_MS = 500;
 
 /** Leading `[emotion]` tag plus the whitespace after it (same shape `extractEmotion` accepts). */
 const TAG_PREFIX = /^\s*\[[a-z]+\]\s*/i;
@@ -227,7 +234,7 @@ export class Session {
       if (!ttsStarted) { this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'start' }); ttsStarted = true; this.state = 'speaking'; }
       this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'sentence_start', text: sentence });
       spoken.push(sentence);
-      for await (const frame of this.deps.synthesize(sentence, signal)) {
+      for await (const frame of this.deps.synthesize(speechText(sentence), signal)) {
         if (this.abortRequested || !this.socket.isOpen) return;
         const lead = (playEnd - this.deps.now()) / FRAME_MS;
         if (lead > MAX_LEAD_FRAMES) {
@@ -266,10 +273,10 @@ export class Session {
       }
     } finally {
       if (ttsStarted && this.socket.isOpen) {
-        // Let the device play out what we sent ahead of real time before announcing the end,
-        // one frame at a time so a barge-in during the drain stops it within a frame.
+        // Let the device play out what we sent ahead of real time, plus its own pipeline latency,
+        // before announcing the end; one frame at a time so a barge-in during the drain stops it within a frame.
         let remaining: number;
-        while (!this.abortRequested && this.socket.isOpen && (remaining = playEnd - this.deps.now()) > 0) {
+        while (!this.abortRequested && this.socket.isOpen && (remaining = playEnd + TTS_STOP_MARGIN_MS - this.deps.now()) > 0) {
           await this.deps.sleep(Math.min(FRAME_MS, remaining));
         }
         if (this.socket.isOpen) {

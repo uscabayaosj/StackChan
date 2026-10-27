@@ -48,6 +48,14 @@ export class SentenceAccumulator {
   }
 }
 
+/**
+ * Respellings for the TTS voice only; the text shown on the robot keeps the real spelling.
+ * ElevenLabs reads "Saoirse" as written; "Seersha" gets SEER-shuh.
+ */
+export function speechText(text: string): string {
+  return text.replace(/saoirse/gi, m => (m[0] === 'S' ? 'Seersha' : 'seersha'));
+}
+
 export function extractEmotion(text: string): { emotion: Emotion; rest: string } {
   const m = /^\s*\[([a-z]+)\]\s*/i.exec(text);
   if (!m) return { emotion: 'neutral', rest: text.trim() };
