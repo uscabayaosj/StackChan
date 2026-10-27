@@ -1,11 +1,11 @@
 # saoirse-server
 
-The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket protocol to the robot and answers as Saoirse: ElevenLabs Scribe for speech-to-text, an OpenAI-compatible LLM (OpenRouter → `openai/gpt-oss-20b` on Groq by default), ElevenLabs Flash v2.5 for the voice, streamed back as 60 ms Opus frames. Design: `docs/superpowers/specs/2026-10-27-saoirse-design.md`.
+The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket protocol to the robot and answers as Saoirse: ElevenLabs Scribe for speech-to-text, an OpenAI-compatible LLM (OpenRouter → `openai/gpt-oss-20b` on Groq by default), ElevenLabs Flash v2.5 for the voice, streamed back as 60 ms Opus frames. Design: `docs/superpowers/specs/2026-10-27-saoirse-design.md` (in the repository root, not under `saoirse-server/`).
 
 ## Endpoints
 
 - `POST /api/ota` — the robot's boot check. Returns the WebSocket URL, the device token, server time and the robot's own firmware version (so no upgrade is offered).
-- `WS /api/ws` — one conversation session per connection. Requires `Authorization: Bearer <SAOIRSE_DEVICE_TOKEN>`.
+- `WS /api/ws` — one conversation session per connection. Requires `Authorization: Bearer <SAOIRSE_DEVICE_TOKEN>`; the token is enforced only when `SAOIRSE_DEVICE_TOKEN` is set (leave it empty and the endpoint is open).
 
 ## Run locally
 
@@ -35,11 +35,11 @@ vercel env add <NAME> production      # one per variable in .env.example (never 
 vercel deploy --prod --yes
 ```
 
-Then set `PUBLIC_WS_URL=wss://<your-host>/api/ws` and redeploy. `vercel.json` disables framework detection (so `api/` builds as functions), serves no static files, bundles the `opusscript` WASM into the WebSocket function, and sets `maxDuration` 300 s (Hobby's cap; sessions close themselves after 60 s of silence).
+Then set `PUBLIC_WS_URL=wss://<your-host>/api/ws` and redeploy. To point the robot at the deployment, copy `firmware/sdkconfig.defaults.saoirse.example` to `firmware/sdkconfig.defaults.local` (repository root; the file is created by the firmware plan and is the intended mechanism) and set `CONFIG_OTA_URL="https://<deployment-host>/api/ota"`. `vercel.json` disables framework detection (so `api/` builds as functions), serves no static files, bundles the `opusscript` WASM into the WebSocket function, and sets `maxDuration` 300 s (Hobby's cap; sessions close themselves after 60 s of silence).
 
 ## Configuration notes
 
 - `OPUS_CODEC`: `wasm` (default) or `native`. The native `@discordjs/opus` crashed the process on quiet audio on macOS arm64, so WASM is the default everywhere.
 - `LLM_REASONING_EFFORT` (default `low`) and `LLM_MAX_TOKENS` (default 400): `gpt-oss-20b` is a reasoning model; without these it spends its whole budget thinking and says nothing. Set effort to `none` for non-OpenRouter backends.
-- `LLM_FALLBACK_*`: a second OpenAI-compatible model used only when the primary fails before producing any text.
+- `LLM_FALLBACK_*`: a second OpenAI-compatible model used only when the primary fails before producing any text. `LLM_FALLBACK_REASONING_EFFORT` defaults to `none` (no `reasoning` field is sent) because DeepSeek-style APIs can reject it with a non-retryable 400.
 - VAD: `VAD_RMS_THRESHOLD` (0.025), `VAD_SILENCE_MS` (800), `VAD_MIN_SPEECH_MS` (300).

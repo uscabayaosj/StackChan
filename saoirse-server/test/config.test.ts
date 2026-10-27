@@ -26,6 +26,10 @@ describe('loadConfig', () => {
     expect(c.fallbackLlm?.model).toBe('deepseek-flash');
     expect(c.fallbackLlm?.baseUrl).toBe('https://api.deepseek.com/v1');
     expect(c.fallbackLlm?.maxTokens).toBe(400);
+    expect(c.fallbackLlm?.reasoningEffort).toBe('none');
+  });
+  it('lets the fallback reasoning effort be overridden to low', () => {
+    const c = loadConfig({ ...base, LLM_FALLBACK_API_KEY: 'd', LLM_FALLBACK_REASONING_EFFORT: 'low' });
     expect(c.fallbackLlm?.reasoningEffort).toBe('low');
   });
   it('overrides max tokens and reasoning effort for primary and fallback', () => {
@@ -35,12 +39,16 @@ describe('loadConfig', () => {
       LLM_REASONING_EFFORT: 'high',
       LLM_FALLBACK_API_KEY: 'd',
       LLM_FALLBACK_MAX_TOKENS: '250',
-      LLM_FALLBACK_REASONING_EFFORT: 'none',
+      LLM_FALLBACK_REASONING_EFFORT: 'medium',
     });
     expect(c.llm.maxTokens).toBe(600);
     expect(c.llm.reasoningEffort).toBe('high');
     expect(c.fallbackLlm?.maxTokens).toBe(250);
-    expect(c.fallbackLlm?.reasoningEffort).toBe('none');
+    expect(c.fallbackLlm?.reasoningEffort).toBe('medium');
+  });
+  it('throws on a non-numeric number setting', () => {
+    expect(() => loadConfig({ ...base, LLM_MAX_TOKENS: 'abc' })).toThrow(/LLM_MAX_TOKENS/);
+    expect(() => loadConfig({ ...base, VAD_SILENCE_MS: 'Infinity' })).toThrow(/VAD_SILENCE_MS/);
   });
   it('throws on a missing required key', () => {
     expect(() => loadConfig({ ...base, ELEVENLABS_API_KEY: '' })).toThrow(/ELEVENLABS_API_KEY/);

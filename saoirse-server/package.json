@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "main": "api/ws.ts",
   "engines": {
     "node": "22.x"
   },

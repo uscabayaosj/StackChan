@@ -31,12 +31,15 @@ function req(env: NodeJS.ProcessEnv, key: string): string {
 
 function num(env: NodeJS.ProcessEnv, key: string, dflt: number): number {
   const v = env[key];
-  return v === undefined || v === '' ? dflt : Number(v);
+  if (v === undefined || v === '') return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`Invalid ${key}: ${v} (expected a number)`);
+  return n;
 }
 
-function effort(env: NodeJS.ProcessEnv, key: string): ReasoningEffort {
+function effort(env: NodeJS.ProcessEnv, key: string, dflt: ReasoningEffort): ReasoningEffort {
   const v = (env[key] ?? '').trim().toLowerCase();
-  if (v === '') return 'low';
+  if (v === '') return dflt;
   if (v === 'low' || v === 'medium' || v === 'high' || v === 'none') return v;
   throw new Error(`Invalid ${key}: ${v} (expected low, medium, high or none)`);
 }
@@ -50,7 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       model: env.LLM_MODEL || 'openai/gpt-oss-20b',
       providerOrder: (env.LLM_PROVIDER_ORDER ?? 'groq').split(',').map(s => s.trim()).filter(Boolean),
       maxTokens: num(env, 'LLM_MAX_TOKENS', 400),
-      reasoningEffort: effort(env, 'LLM_REASONING_EFFORT'),
+      reasoningEffort: effort(env, 'LLM_REASONING_EFFORT', 'low'),
     },
     fallbackLlm: fallbackKey
       ? {
@@ -58,7 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           apiKey: fallbackKey,
           model: env.LLM_FALLBACK_MODEL || 'deepseek-flash',
           maxTokens: num(env, 'LLM_FALLBACK_MAX_TOKENS', 400),
-          reasoningEffort: effort(env, 'LLM_FALLBACK_REASONING_EFFORT'),
+          reasoningEffort: effort(env, 'LLM_FALLBACK_REASONING_EFFORT', 'none'),
         }
       : undefined,
     elevenlabs: {

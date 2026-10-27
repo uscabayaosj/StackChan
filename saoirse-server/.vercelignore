@@ -1,5 +1,5 @@
-test
-scripts
+/test
+/scripts
 *.wav
 .env*
 .superpowers

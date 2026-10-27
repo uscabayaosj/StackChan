@@ -152,6 +152,24 @@ describe('streamChatWithFallback policy', () => {
     expect(calls).toEqual(['https://llm.test/v1/chat/completions']);
   });
 
+  it('sends no reasoning field to the fallback when its effort is none, and sends it when low', async () => {
+    const run = async (effort: 'none' | 'low') => {
+      const bodies: Record<string, unknown>[] = [];
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        if (url.startsWith('https://llm.test')) return new Response('down', { status: 503 });
+        bodies.push(JSON.parse(String(init.body)));
+        return sse([delta('ok'), '[DONE]']);
+      }) as unknown as typeof fetch;
+      for await (const _ of streamChatWithFallback(cfg, { ...fb, reasoningEffort: effort }, msgs, fetchImpl)) void _;
+      return bodies;
+    };
+    const none = await run('none');
+    expect(none).toHaveLength(1);
+    expect('reasoning' in none[0]).toBe(false);
+    const low = await run('low');
+    expect(low[0].reasoning).toEqual({ effort: 'low', exclude: true });
+  });
+
   it('does not fall back on a non-retryable 4xx', async () => {
     const calls: string[] = [];
     const fetchImpl = (async (url: string) => {

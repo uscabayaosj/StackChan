@@ -126,8 +126,9 @@ export function attachWebSocket(
       close: () => ws.close(),
       get isOpen() { return ws.readyState === ws.OPEN; },
     };
+    const log = sharedDeps?.log ?? sharedLog;
     // Attach first so an early socket error can never be an unhandled 'error' event.
-    ws.on('error', err => sharedLog(`socket error ${err.message}`));
+    ws.on('error', err => log(`socket error ${err.message}`));
     let deps: SessionDeps;
     let session: Session;
     try {
@@ -135,7 +136,7 @@ export function attachWebSocket(
       deps = sharedDeps ?? createDeps(cfg, codecFactory());
       session = new Session(sock, deps, deviceId, historyFor(deviceId));
     } catch (err) {
-      sharedLog(`setup failed for ${deviceId}: ${err instanceof Error ? err.message : String(err)}`);
+      log(`setup failed for ${deviceId}: ${err instanceof Error ? err.message : String(err)}`);
       try { ws.close(1011, 'server setup failed'); } catch { /* socket already gone */ }
       return;
     }
