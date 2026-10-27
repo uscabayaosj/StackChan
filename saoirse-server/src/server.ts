@@ -1,17 +1,38 @@
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config } from './config.js';
-import { createCodec } from './opus.js';
+import { createCodec, type OpusCodec } from './opus.js';
 import { transcribe } from './stt.js';
 import { streamChatWithFallback, type ChatMessage } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
 import { Session, type SessionDeps, type SessionSocket } from './session.js';
 import { buildOtaResponse, deviceVersionFromBody } from './ota.js';
 
+/** Conversation history per device id, bounded: oldest-inserted device is evicted first. */
+const MAX_HISTORIES = 32;
 const histories = new Map<string, ChatMessage[]>();
 
-export function createDeps(cfg: Config): SessionDeps {
-  const codec = createCodec();
+function historyFor(deviceId: string): ChatMessage[] {
+  let h = histories.get(deviceId);
+  if (h) {
+    // Refresh recency so an active device is never the eviction victim.
+    histories.delete(deviceId);
+    histories.set(deviceId, h);
+    return h;
+  }
+  h = [];
+  histories.set(deviceId, h);
+  while (histories.size > MAX_HISTORIES) {
+    const oldest = histories.keys().next().value;
+    if (oldest === undefined) break;
+    histories.delete(oldest);
+  }
+  return h;
+}
+
+/** Build session deps. The Opus codec is stateful per stream, so pass a codec owned by one connection. */
+export function createDeps(cfg: Config, codec: OpusCodec = createCodec()): SessionDeps {
   return {
     config: cfg,
     codec,
@@ -24,10 +45,31 @@ export function createDeps(cfg: Config): SessionDeps {
   };
 }
 
+/** Request path, or null when the request target is not parseable (hostile absolute-form etc). */
+function safePathname(req: http.IncomingMessage): string | null {
+  try { return new URL(req.url ?? '/', 'http://localhost').pathname; } catch { return null; }
+}
+
+/** Constant-time check of an Authorization header against the expected bearer token. */
+function bearerMatches(header: string, token: string): boolean {
+  const a = Buffer.from(header);
+  const b = Buffer.from(`Bearer ${token}`);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const MAX_BODY_BYTES = 64 * 1024;
+
+class BodyTooLargeError extends Error {}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', c => chunks.push(c));
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) { chunks.length = 0; reject(new BodyTooLargeError()); return; }
+      chunks.push(c);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
@@ -35,19 +77,39 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 
 export async function handleOta(cfg: Config, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   let body: unknown = {};
-  try { body = JSON.parse((await readBody(req)) || '{}'); } catch { /* ignore */ }
+  try {
+    body = JSON.parse((await readBody(req)) || '{}');
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      res.writeHead(413, { 'Content-Type': 'text/plain', Connection: 'close' });
+      res.end('payload too large', () => req.destroy());
+      return;
+    }
+    /* malformed JSON: treat as an empty body */
+  }
   console.log(`[ota] device=${req.headers['device-id']} version=${deviceVersionFromBody(body)}`);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(buildOtaResponse(cfg, deviceVersionFromBody(body), new Date())));
 }
 
-export function attachWebSocket(cfg: Config, server: http.Server, deps: SessionDeps = createDeps(cfg)): WebSocketServer {
+/**
+ * Attach the /api/ws upgrade handler. Unless `sharedDeps` is injected (tests), every connection
+ * gets its own deps and therefore its own Opus codec from `codecFactory`.
+ */
+export function attachWebSocket(
+  cfg: Config,
+  server: http.Server,
+  sharedDeps?: SessionDeps,
+  codecFactory: () => OpusCodec = createCodec,
+): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/api/ws') { socket.destroy(); return; }
+    // A client reset between our 401 write and destroy() would otherwise be an unhandled 'error'.
+    socket.on('error', () => {});
+    const pathname = safePathname(req);
+    if (pathname !== '/api/ws') { socket.destroy(); return; }
     const auth = req.headers.authorization ?? '';
-    if (cfg.deviceToken && auth !== `Bearer ${cfg.deviceToken}`) {
+    if (cfg.deviceToken && !bearerMatches(auth, cfg.deviceToken)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -55,6 +117,7 @@ export function attachWebSocket(cfg: Config, server: http.Server, deps: SessionD
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   });
   wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+    const deps = sharedDeps ?? createDeps(cfg, codecFactory());
     const deviceId = String(req.headers['device-id'] ?? 'unknown');
     const sock: SessionSocket = {
       sendText: j => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(j)); },
@@ -62,8 +125,7 @@ export function attachWebSocket(cfg: Config, server: http.Server, deps: SessionD
       close: () => ws.close(),
       get isOpen() { return ws.readyState === ws.OPEN; },
     };
-    const history = histories.get(deviceId) ?? [];
-    histories.set(deviceId, history);
+    const history = historyFor(deviceId);
     const session = new Session(sock, deps, deviceId, history);
     deps.log(`connected ${deviceId}`);
     const timer = setInterval(() => session.tick(), 1000);
@@ -77,13 +139,14 @@ export function attachWebSocket(cfg: Config, server: http.Server, deps: SessionD
   return wss;
 }
 
-export function createAppServer(cfg: Config, deps?: SessionDeps): http.Server {
+export function createAppServer(cfg: Config, deps?: SessionDeps, codecFactory?: () => OpusCodec): http.Server {
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (req.method === 'POST' && url.pathname === '/api/ota') { void handleOta(cfg, req, res); return; }
-    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('saoirse-server ok'); return; }
+    const pathname = safePathname(req);
+    if (pathname === null) { res.writeHead(400, { Connection: 'close' }); res.end(); return; }
+    if (req.method === 'POST' && pathname === '/api/ota') { void handleOta(cfg, req, res); return; }
+    if (req.method === 'GET' && pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('saoirse-server ok'); return; }
     res.writeHead(404); res.end();
   });
-  attachWebSocket(cfg, server, deps);
+  attachWebSocket(cfg, server, deps, codecFactory);
   return server;
 }

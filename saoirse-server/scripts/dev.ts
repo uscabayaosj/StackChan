@@ -3,9 +3,16 @@ import { createAppServer } from '../src/server.js';
 import { loadConfig } from '../src/config.js';
 
 if (existsSync('.env.local')) {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  for (const raw of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let value = m[2].trim();
+    const q = value[0];
+    if (value.length >= 2 && (q === '"' || q === "'") && value.endsWith(q)) value = value.slice(1, -1);
+    // An already-set variable (even an empty string) wins over the file: the shell is authoritative.
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
   }
 }
 const cfg = loadConfig();
