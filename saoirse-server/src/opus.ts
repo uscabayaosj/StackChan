@@ -62,16 +62,18 @@ export function createCodec(kind: CodecKind = 'auto'): OpusCodec {
   }
 }
 
+/** Returns `pcm` unchanged if it is already one frame, else a zero-padded copy. */
+export function padFrame(pcm: Buffer): Buffer {
+  if (pcm.length === FRAME_BYTES) return pcm;
+  const padded = Buffer.alloc(FRAME_BYTES);
+  pcm.copy(padded);
+  return padded;
+}
+
 export function pcmToFrames(pcm: Buffer): Buffer[] {
   const frames: Buffer[] = [];
   for (let off = 0; off < pcm.length; off += FRAME_BYTES) {
-    const chunk = pcm.subarray(off, Math.min(off + FRAME_BYTES, pcm.length));
-    if (chunk.length === FRAME_BYTES) frames.push(chunk);
-    else {
-      const padded = Buffer.alloc(FRAME_BYTES);
-      chunk.copy(padded);
-      frames.push(padded);
-    }
+    frames.push(padFrame(pcm.subarray(off, Math.min(off + FRAME_BYTES, pcm.length))));
   }
   return frames;
 }
