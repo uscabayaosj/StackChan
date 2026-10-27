@@ -46,14 +46,14 @@ function utter(s: Session, env: ReturnType<typeof makeEnv>) {
 const hello = JSON.stringify({ type: 'hello', version: 1, transport: 'websocket', audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 } });
 
 describe('Session', () => {
-  it('answers hello with transport, session_id and 16 kHz opus params', async () => {
+  it('answers hello with transport, session_id and 24 kHz opus params (the robot speaker rate)', async () => {
     const env = makeEnv();
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await s.handleText(hello);
     expect(env.sent[0].type).toBe('hello');
     expect(env.sent[0].transport).toBe('websocket');
     expect(typeof env.sent[0].session_id).toBe('string');
-    expect(env.sent[0].audio_params).toEqual({ format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 });
+    expect(env.sent[0].audio_params).toEqual({ format: 'opus', sample_rate: 24000, channels: 1, frame_duration: 60 });
   });
 
   it('runs stt → llm → tts after end of speech and emits the protocol messages in order', async () => {

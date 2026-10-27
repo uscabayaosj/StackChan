@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
-import { FRAME_MS, rms, type OpusCodec } from './opus.js';
+import { FRAME_MS, OUTPUT_SAMPLE_RATE, rms, type OpusCodec } from './opus.js';
 import { EnergyVad } from './vad.js';
 import { SentenceAccumulator, extractEmotion } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
@@ -117,7 +117,7 @@ export class Session {
       case 'hello':
         this.socket.sendText({
           type: 'hello', transport: 'websocket', session_id: this.sessionId,
-          audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: FRAME_MS },
+          audio_params: { format: 'opus', sample_rate: OUTPUT_SAMPLE_RATE, channels: 1, frame_duration: FRAME_MS },
         });
         break;
       case 'listen':

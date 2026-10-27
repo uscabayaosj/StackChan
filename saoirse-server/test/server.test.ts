@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import WebSocket from 'ws';
 import net, { type AddressInfo } from 'node:net';
 import { createAppServer, createDeps } from '../src/server.js';
-import { createCodec, FRAME_BYTES, type OpusCodec } from '../src/opus.js';
+import { createCodec, FRAME_BYTES, OUT_FRAME_BYTES, type OpusCodec } from '../src/opus.js';
 import { Session, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 
@@ -32,7 +32,7 @@ describe('createAppServer', () => {
     good.send(JSON.stringify({ type: 'hello', version: 1, transport: 'websocket', audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 } }));
     const reply: any = await new Promise(r => good.on('message', d => r(JSON.parse(d.toString()))));
     expect(reply.type).toBe('hello');
-    expect(reply.audio_params.sample_rate).toBe(16000);
+    expect(reply.audio_params.sample_rate).toBe(24000);
     good.close();
   });
 
@@ -181,7 +181,7 @@ describe('createDeps deadlines', () => {
       const signal: AbortSignal = init.signal;
       signals.push(signal);
       if (url.endsWith('/speech-to-text')) return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
-      if (url.includes('/text-to-speech/')) return new Response(new Uint8Array(FRAME_BYTES * 2), { status: 200 });
+      if (url.includes('/text-to-speech/')) return new Response(new Uint8Array(OUT_FRAME_BYTES * 2), { status: 200 });
       // LLM: one sentence, then the stream hangs until its signal aborts (like a real fetch body).
       const body = new ReadableStream<Uint8Array>({
         start(ctl) {

@@ -1,6 +1,6 @@
 # saoirse-server
 
-The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket protocol to the robot and answers as Saoirse: ElevenLabs Scribe for speech-to-text, an OpenAI-compatible LLM (OpenRouter → `openai/gpt-oss-20b` on Groq by default), ElevenLabs Flash v2.5 for the voice, streamed back as 60 ms Opus frames. Design: `docs/superpowers/specs/2026-10-27-saoirse-design.md` (in the repository root, not under `saoirse-server/`).
+The AI server behind the Saoirse StackChan. It speaks the xiaozhi v1 WebSocket protocol to the robot and answers as Saoirse: ElevenLabs Scribe for speech-to-text, an OpenAI-compatible LLM (OpenRouter → `openai/gpt-oss-20b` on Groq by default), ElevenLabs Flash v2.5 for the voice, streamed back as 60 ms Opus frames at 24 kHz (the robot's speaker rate, so it plays without resampling; the microphone side stays 16 kHz). Design: `docs/superpowers/specs/2026-10-27-saoirse-design.md` (in the repository root, not under `saoirse-server/`).
 
 ## Endpoints
 
@@ -25,7 +25,7 @@ npm run typecheck
 npm run fake-robot -- --wav test/fixtures/question.wav --token "$SAOIRSE_DEVICE_TOKEN" [--url wss://…/api/ws] [--out reply.wav]
 ```
 
-The fake robot plays a 16 kHz mono WAV through the whole pipeline like the real device and writes the spoken reply to a WAV. Make a fixture with `say -o q.aiff "what time is it" && afconvert -f WAVE -d LEI16@16000 -c 1 q.aiff test/fixtures/question.wav`.
+The fake robot plays a 16 kHz mono WAV through the whole pipeline like the real device and writes the spoken reply to a WAV at the rate the server's hello announces (24 kHz). Make a fixture with `say -o q.aiff "what time is it" && afconvert -f WAVE -d LEI16@16000 -c 1 q.aiff test/fixtures/question.wav`.
 
 ## Deploy (Vercel)
 

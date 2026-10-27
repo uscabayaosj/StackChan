@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import WebSocket from 'ws';
-import { createCodec, pcmToFrames, FRAME_MS, FRAME_BYTES } from './opus.js';
+import { createCodec, pcmToFrames, FRAME_MS, FRAME_BYTES, INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, type OpusCodec } from './opus.js';
 import { wavToPcm, pcmToWav } from './wav.js';
 
 export interface FakeRobotOptions {
@@ -31,8 +31,11 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
     throw new Error(`WAV must be 16 kHz mono (got ${sampleRate} Hz, ${channels} ch). Convert with: ffmpeg -i in.wav -ar 16000 -ac 1 out.wav`);
   }
 
-  const codec = createCodec();
-  const frames = pcmToFrames(pcm).map(f => codec.encodeFrame(f));
+  // Like the robot: the microphone goes out at 16 kHz; replies are decoded at whatever rate the server's hello announces.
+  const mic = createCodec('auto', { encodeRate: INPUT_SAMPLE_RATE, decodeRate: INPUT_SAMPLE_RATE });
+  let speaker: OpusCodec | undefined;
+  let replyRate = OUTPUT_SAMPLE_RATE;
+  const frames = pcmToFrames(pcm).map(f => mic.encodeFrame(f));
   const replyPcm: Buffer[] = [];
   const result: FakeRobotResult = { stt: '', emotion: '', sentences: [], replyFrames: 0 };
   const t0 = Date.now();
@@ -48,6 +51,8 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
       ws.removeAllListeners();
       ws.on('error', () => {});
       ws.terminate();
+      mic.dispose?.();
+      speaker?.dispose?.();
       if (err) reject(err); else resolve(result);
     };
     const timer = setTimeout(() => finish(new Error(`timed out after ${timeoutMs} ms waiting for the reply`)), timeoutMs);
@@ -55,7 +60,7 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
     const sendAudio = async (sessionId: string) => {
       ws.send(JSON.stringify({ session_id: sessionId, type: 'listen', state: 'start', mode: 'auto' }));
       for (const f of frames) { ws.send(f, { binary: true }); await sleep(FRAME_MS); }
-      const silent = codec.encodeFrame(Buffer.alloc(FRAME_BYTES));
+      const silent = mic.encodeFrame(Buffer.alloc(FRAME_BYTES));
       for (let i = 0; i < SILENT_FRAMES; i++) { ws.send(silent, { binary: true }); await sleep(FRAME_MS); }
       stamp(`-> sent ${frames.length} speech frames + ${SILENT_FRAMES} silent frames`);
     };
@@ -67,10 +72,12 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
 
     ws.on('message', (data, isBinary) => {
       try {
-        if (isBinary) { replyPcm.push(codec.decode(Buffer.from(data as Buffer))); return; }
+        if (isBinary) { if (speaker) replyPcm.push(speaker.decode(Buffer.from(data as Buffer))); return; }
         const msg = JSON.parse(data.toString());
         stamp(`<- ${JSON.stringify(msg)}`);
         if (msg.type === 'hello') {
+          replyRate = msg.audio_params?.sample_rate ?? OUTPUT_SAMPLE_RATE;
+          speaker = createCodec('auto', { encodeRate: replyRate, decodeRate: replyRate });
           sendAudio(msg.session_id).catch(e => finish(e as Error));
         } else if (msg.type === 'stt') {
           result.stt = msg.text;
@@ -80,8 +87,8 @@ export async function runFakeRobot(opts: FakeRobotOptions): Promise<FakeRobotRes
           result.sentences.push(msg.text);
         } else if (msg.type === 'tts' && msg.state === 'stop') {
           result.replyFrames = replyPcm.length;
-          writeFileSync(outPath, pcmToWav(Buffer.concat(replyPcm)));
-          stamp(`reply audio: ${replyPcm.length} frames -> ${outPath} (${((replyPcm.length * FRAME_MS) / 1000).toFixed(1)} s)`);
+          writeFileSync(outPath, pcmToWav(Buffer.concat(replyPcm), replyRate));
+          stamp(`reply audio: ${replyPcm.length} frames at ${replyRate} Hz -> ${outPath} (${((replyPcm.length * FRAME_MS) / 1000).toFixed(1)} s)`);
           finish();
         }
       } catch (e) {

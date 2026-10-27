@@ -18,7 +18,7 @@ Turn the stock M5Stack StackChan into **Saoirse**: the owner's Birman cat as a k
 - The robot talks to two services over Wi-Fi:
   1. `CONFIG_STACKCHAN_SERVER_URL` (M5Stack's Go server): account, binding, app store, dances, app WebSocket relay. **Unchanged.**
   2. `CONFIG_OTA_URL` (default `https://api.tenclass.net/xiaozhi/ota/`): the xiaozhi OTA check. Its JSON reply carries the WebSocket URL and token the robot then uses for every conversation. **This is the only endpoint we redirect.**
-- The conversation channel is the xiaozhi WebSocket protocol v1 (`docs/websocket.md` in xiaozhi-esp32 v2.2.4): JSON control frames plus binary Opus audio, 16 kHz mono, 60 ms frames.
+- The conversation channel is the xiaozhi WebSocket protocol v1 (`docs/websocket.md` in xiaozhi-esp32 v2.2.4): JSON control frames plus binary Opus audio, mono, 60 ms frames: 16 kHz from the robot's microphone, 24 kHz back to its speaker (the CoreS3 codec's output rate, so the firmware plays it without resampling; it logs a distortion warning for 16 kHz).
 - The robot opens the channel on wake word and keeps it until the server closes it or the conversation idles. Vercel closes any WebSocket at the function's max duration (300 s on Hobby), so the server must end idle sessions well before that.
 - The face is an LVGL "skin": `firmware/main/stackchan/avatar/skins/default/` (eyes, mouth, speech bubble) created with `std::make_unique<DefaultAvatar>()` at six sites (`hal/board/stackchan_display.cc`, `apps/app_avatar`, `app_dance`, `app_espnow_ctrl`, `app_ezdata`, `app_setup/workers/connectivity.cpp`). Emotions arrive from the server as `llm` messages and are mapped in `StackChanAvatarDisplay::SetEmotion` to `Emotion::{Neutral,Happy,Angry,Sad,Doubt,Sleepy}`. Blink, breath, idle motion, head-pet, speaking (mouth toggles every ~180 ms with a random opening) are "modifiers" that drive `Feature::setWeight/setPosition/setRotation` on the eyes and mouth; a skin only has to implement those.
 - Static images ship in the firmware's asset bundle (`firmware/main/assets/assets_bin/`, loaded with `assets::get_image("name")`); PNG is supported (`CONFIG_LV_USE_LODEPNG=y`).
@@ -30,12 +30,12 @@ Turn the stock M5Stack StackChan into **Saoirse**: the owner's Birman cat as a k
                       │  boot: POST CONFIG_OTA_URL ──► saoirse-server /api/ota  (Vercel)
                       │        ◄── { websocket: { url, token }, server_time }
                       │
-                      │  conversation: wss://…/api/ws  (xiaozhi v1, Opus 16 kHz)
+                      │  conversation: wss://…/api/ws  (xiaozhi v1, Opus 16 kHz in / 24 kHz out)
                       ▼
                saoirse-server (TypeScript, Vercel Functions, Fluid compute)
                       ├── STT: ElevenLabs Scribe v2
                       ├── LLM: OpenAI-compatible (default OpenRouter → openai/gpt-oss-20b on Groq)
-                      └── TTS: ElevenLabs eleven_flash_v2_5 → PCM 16 kHz → Opus 60 ms frames
+                      └── TTS: ElevenLabs eleven_flash_v2_5 → PCM 24 kHz → Opus 60 ms frames
 ```
 
 M5Stack's cloud is still used for everything the phone app does. Only conversation audio goes to saoirse-server.
@@ -107,7 +107,7 @@ No `activation` object (the StackChan patch treats `activation.code` as "bind in
 ### 7.3 WebSocket session
 
 - Verify `Authorization: Bearer <token>` equals `SAOIRSE_DEVICE_TOKEN` (when set); `Protocol-Version: 1`.
-- On device `hello`: reply `{"type":"hello","transport":"websocket","session_id":<uuid>,"audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}`.
+- On device `hello`: reply `{"type":"hello","transport":"websocket","session_id":<uuid>,"audio_params":{"format":"opus","sample_rate":24000,"channels":1,"frame_duration":60}}` (24 kHz is what we send; the robot keeps sending 16 kHz).
 - `listen` `start`/`detect`: begin capturing binary frames (decode to PCM for VAD; keep the Opus packets). `listen` `stop`: process immediately. Otherwise process when the energy VAD sees ≥ 800 ms of silence after speech (ticker 100 ms, RMS threshold ~0.025, pre-roll 300 ms). Discard captures with no speech or < 300 ms of speech.
 - `abort`: stop any TTS in flight, flush, go back to listening.
 - Processing: STT → send `stt` text → LLM stream → per sentence: `tts sentence_start` then Opus frames paced at 60 ms (allowed to run up to ~3 s ahead; the firmware buffers 80 packets) → `tts stop` after the last frame has had time to play. `tts start` is sent once at the first sentence. Emotion: the LLM reply must start with one tag from `[neutral] [happy] [angry] [sad] [doubtful] [sleepy]`; it is stripped and sent as `{"type":"llm","emotion":"…","text":""}` before the first sentence. Missing tag → `neutral`.

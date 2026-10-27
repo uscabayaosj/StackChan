@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createAppServer } from '../src/server.js';
 import { loadConfig } from '../src/config.js';
-import { createCodec, FRAME_BYTES } from '../src/opus.js';
+import { createCodec, OUT_FRAME_BYTES } from '../src/opus.js';
 import { pcmToWav } from '../src/wav.js';
 import { runFakeRobot } from '../src/fake_robot.js';
 import type { SessionDeps } from '../src/session.js';
@@ -38,8 +38,8 @@ describe('runFakeRobot', () => {
       transcribe: async () => 'what time is it',
       chat: async function* () { yield '[doubtful] Late. You know that.'; },
       synthesize: async function* () {
-        yield codec.encodeFrame(Buffer.alloc(FRAME_BYTES));
-        yield codec.encodeFrame(Buffer.alloc(FRAME_BYTES));
+        yield codec.encodeFrame(Buffer.alloc(OUT_FRAME_BYTES));
+        yield codec.encodeFrame(Buffer.alloc(OUT_FRAME_BYTES));
       },
       now: () => Date.now(),
       sleep: async () => {},
@@ -61,7 +61,9 @@ describe('runFakeRobot', () => {
     expect(result.sentences).toEqual(['Late.', 'You know that.']);
     expect(result.replyFrames).toBe(4);
     expect(existsSync(outPath)).toBe(true);
-    expect(readFileSync(outPath).length).toBe(44 + 4 * FRAME_BYTES);
+    // Decoded at the 24 kHz the server's hello announced: 2880 bytes per 60 ms frame.
+    expect(readFileSync(outPath).length).toBe(44 + 4 * OUT_FRAME_BYTES);
+    expect(readFileSync(outPath).readUInt32LE(24)).toBe(24000);
   }, 15_000);
 
   it('rejects a WAV that is not 16 kHz mono', async () => {
