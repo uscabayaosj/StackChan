@@ -9,5 +9,6 @@
       "maxDuration": 10
     }
   },
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "installCommand": "npm install --omit=optional"
 }
