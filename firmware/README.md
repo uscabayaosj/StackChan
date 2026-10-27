@@ -32,3 +32,10 @@ ctest --test-dir build-host-tests --output-on-failure
 ```bash
 idf.py flash
 ```
+
+## Saoirse build
+
+- Face: `CONFIG_STACKCHAN_SKIN_SAOIRSE=y` (default). Assets are rendered from `tools/saoirse/saoirse.svg`; see `tools/saoirse/README.md`.
+- AI server: copy `sdkconfig.defaults.saoirse.example` to `sdkconfig.defaults.local` (git-ignored, applied automatically by the build) and set `CONFIG_OTA_URL` to your saoirse-server deployment, e.g. `https://saoirse-server.vercel.app/api/ota`. Everything else keeps using M5Stack's cloud.
+- Preview on a Mac without flashing: `./scripts/run-ui-sim.sh --headless --scenario firmware/tools/ui_sim/scenarios/saoirse_emotions.json --screenshot /tmp/saoirse.ppm` (see `tools/ui_sim/README.md`).
+- Flash: `. ~/esp/esp-idf/export.sh && idf.py -p /dev/cu.usbmodem<id> flash monitor`.
