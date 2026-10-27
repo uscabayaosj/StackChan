@@ -11,6 +11,17 @@ config STACKCHAN_SERVER_URL
 
 endmenu
 
+menu "StackChan Skin"
+
+config STACKCHAN_SKIN_SAOIRSE
+    bool "Use the Saoirse face skin"
+    default y
+    help
+        Draws the Saoirse (Birman cat) face instead of the stock Stack-chan face.
+        Assets: main/assets/assets_bin/saoirse_*.png, source: tools/saoirse/saoirse.svg.
+
+endmenu
+
 menu "Xiaozhi Assistant"
 
 config OTA_URL
