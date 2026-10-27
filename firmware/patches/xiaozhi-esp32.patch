@@ -316,6 +316,26 @@ index 3692e0c..7bfbc5c 100644
      
      // Strategy instance
      std::unique_ptr<AssetStrategy> strategy_;
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 350ac58..476af30 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -159,11 +159,14 @@ void AudioService::Start() {
+ #endif
+ 
+     /* Start the opus codec task */
++    // StackChan: priority 5, not upstream's 2. The LVGL task (priority 3, core 1) redraws the
++    // animated face throughout a reply and starved the decoder, so playback glitched. The decoder
++    // now runs above the display and the output task (4) and below the input task (8).
+     xTaskCreate([](void* arg) {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->OpusCodecTask();
+         vTaskDelete(NULL);
+-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
++    }, "opus_codec", 2048 * 12, this, 5, &opus_codec_task_handle_);
+ }
+ 
+ void AudioService::Stop() {
 diff --git a/main/boards/common/i2c_device.cc b/main/boards/common/i2c_device.cc
 index 835997d..ea50d51 100644
 --- a/main/boards/common/i2c_device.cc
