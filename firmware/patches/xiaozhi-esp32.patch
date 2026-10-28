@@ -1,5 +1,5 @@
 diff --git a/main/application.cc b/main/application.cc
-index d69d43d..e67514b 100644
+index d69d43d..479a176 100644
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -1,14 +1,15 @@
@@ -24,7 +24,45 @@ index d69d43d..e67514b 100644
  
  #include <cstring>
  #include <esp_log.h>
-@@ -399,6 +400,7 @@ void Application::CheckNewVersion() {
+@@ -19,6 +20,17 @@
+ 
+ #define TAG "Application"
+ 
++// Speaking watchdog. If the server's `tts stop` never arrives (Wi-Fi dropped mid-reply), the
++// device would otherwise sit in kDeviceStateSpeaking until the WebSocket times out (~150 s).
++// Leave speaking when no audio packet has arrived for this long. 8 s cannot fire on a healthy
++// connection: the server sends at most 30 frames (1.8 s) ahead of playback, and the TTS gap
++// between sentences of one reply stays under 3 s.
++static constexpr uint32_t kSpeakingAudioTimeoutMs = 8000;
++
++static inline uint32_t NowMs() {
++    return static_cast<uint32_t>(esp_timer_get_time() / 1000);
++}
++
+ 
+ Application::Application() {
+     event_group_ = xEventGroupCreate();
+@@ -249,6 +261,19 @@ void Application::Run() {
+             clock_ticks_++;
+             auto display = Board::GetInstance().GetDisplay();
+             display->UpdateStatusBar();
++
++            // Speaking watchdog: mirror the `tts stop` transition if the audio stream went silent.
++            if (GetDeviceState() == kDeviceStateSpeaking) {
++                uint32_t silent_ms = NowMs() - last_speaking_audio_ms_.load(std::memory_order_relaxed);
++                if (silent_ms >= kSpeakingAudioTimeoutMs) {
++                    ESP_LOGW(TAG, "Speaking watchdog: no audio for %lu ms, leaving speaking state", (unsigned long)silent_ms);
++                    if (listening_mode_ == kListeningModeManualStop) {
++                        SetDeviceState(kDeviceStateIdle);
++                    } else {
++                        SetDeviceState(kDeviceStateListening);
++                    }
++                }
++            }
+         
+             // Print debug info every 10 seconds
+             if (clock_ticks_ % 10 == 0) {
+@@ -399,6 +424,7 @@ void Application::CheckNewVersion() {
      const int MAX_RETRY = 10;
      int retry_count = 0;
      int retry_delay = 10; // Initial retry delay in seconds
@@ -32,7 +70,7 @@ index d69d43d..e67514b 100644
  
      auto& board = Board::GetInstance();
      while (true) {
-@@ -441,15 +443,18 @@ void Application::CheckNewVersion() {
+@@ -441,15 +467,18 @@ void Application::CheckNewVersion() {
  
          // No new version, mark the current version as valid
          ota_->MarkCurrentVersionValid();
@@ -55,7 +93,23 @@ index d69d43d..e67514b 100644
          }
  
          // This will block the loop until the activation is done or timeout
-@@ -609,36 +614,6 @@ void Application::InitializeProtocol() {
+@@ -497,6 +526,7 @@ void Application::InitializeProtocol() {
+     
+     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+         if (GetDeviceState() == kDeviceStateSpeaking) {
++            last_speaking_audio_ms_.store(NowMs(), std::memory_order_relaxed);
+             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+         }
+     });
+@@ -526,6 +556,7 @@ void Application::InitializeProtocol() {
+             if (strcmp(state->valuestring, "start") == 0) {
+                 Schedule([this]() {
+                     aborted_ = false;
++                    last_speaking_audio_ms_.store(NowMs(), std::memory_order_relaxed);
+                     SetDeviceState(kDeviceStateSpeaking);
+                 });
+             } else if (strcmp(state->valuestring, "stop") == 0) {
+@@ -609,36 +640,6 @@ void Application::InitializeProtocol() {
      protocol_->Start();
  }
  
@@ -92,7 +146,7 @@ index d69d43d..e67514b 100644
  void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
      ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
      auto display = Board::GetInstance().GetDisplay();
-@@ -716,8 +691,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
+@@ -716,8 +717,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
          return;
      }
  
@@ -106,7 +160,7 @@ index d69d43d..e67514b 100644
              return;
          }
      }
-@@ -825,8 +805,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+@@ -825,8 +831,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
          return;
      }
  
@@ -120,16 +174,34 @@ index d69d43d..e67514b 100644
              audio_service_.EnableWakeWordDetection(true);
              return;
          }
-@@ -1116,4 +1101,3 @@ void Application::ResetProtocol() {
+@@ -1116,4 +1127,3 @@ void Application::ResetProtocol() {
          protocol_.reset();
      });
  }
 -
 diff --git a/main/application.h b/main/application.h
-index 7ca7af4..1418901 100644
+index 7ca7af4..a82fcdb 100644
 --- a/main/application.h
 +++ b/main/application.h
-@@ -163,7 +163,6 @@ private:
+@@ -7,6 +7,7 @@
+ #include <esp_timer.h>
+ 
+ #include <string>
++#include <atomic>
+ #include <mutex>
+ #include <deque>
+ #include <memory>
+@@ -138,6 +139,9 @@ private:
+ 
+     bool has_server_time_ = false;
+     bool aborted_ = false;
++    // Speaking watchdog: wall-clock (ms) of the last TTS audio packet received while speaking.
++    // Written from the protocol task, read from the main loop on each clock tick.
++    std::atomic<uint32_t> last_speaking_audio_ms_{0};
+     bool assets_version_checked_ = false;
+     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
+     int clock_ticks_ = 0;
+@@ -163,7 +167,6 @@ private:
      void CheckAssetsVersion();
      void CheckNewVersion();
      void InitializeProtocol();
