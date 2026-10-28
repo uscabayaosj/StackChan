@@ -187,10 +187,11 @@ void Hal::head_touch_init()
     };
     static si12t_handle_t si12t;
     si12t_init(&si12t_cfg, &si12t);
-    // Saoirse: level 3 -> 1. Lower codes are lower capacitance thresholds (Si12T datasheet 12.2.1):
-    // with ChxHL=0 a touch registers at ~0.55% change instead of ~0.95%, about 1.7x more sensitive.
-    // Level 0 (~0.40%) risked false touches from hair and servo noise.
-    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_1);
+    // Level 3 as shipped. Lower codes are lower capacitance thresholds (Si12T datasheet 12.2.1), but on
+    // this robot levels 1 and 2 pick up a periodic electrical pulse (~every 1.15 s) as firm touches on
+    // all three pads: 104 and 68 false touches in ~80 s untouched, vs 7 faint single-pad blips at level 3.
+    // Petting is made more responsive in the gesture recognizer instead (shorter strokes, resting hand).
+    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
 
     // xTaskCreateWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, MALLOC_CAP_SPIRAM);
     xTaskCreatePinnedToCoreWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, 1,
