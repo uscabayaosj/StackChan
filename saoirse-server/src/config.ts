@@ -42,7 +42,11 @@ export interface Config {
   toolTimeoutMs: { camera: number; other: number };
 }
 
-export const DEFAULT_DEVICE_TOOLS = ['self.camera.take_photo', 'self.robot.set_head_angles', 'self.robot.get_head_angles', 'self.robot.set_led_color'];
+export const DEFAULT_DEVICE_TOOLS = [
+  'self.camera.take_photo', 'self.robot.set_head_angles', 'self.robot.get_head_angles', 'self.robot.set_led_color',
+  'self.robot.create_reminder', 'self.robot.get_reminders', 'self.robot.stop_reminder',
+  'self.get_device_status', 'self.audio_speaker.set_volume', 'self.screen.set_brightness', 'self.screen.set_theme',
+];
 
 /** `wss://host/api/ws` -> `https://host/api/vision` (ws -> http for local runs). */
 export function deriveVisionUrl(publicWsUrl: string): string {

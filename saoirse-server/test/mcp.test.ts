@@ -97,3 +97,35 @@ describe('DeviceMcp', () => {
     expect(t.timers.size).toBe(0);
   });
 });
+
+describe('DeviceMcp tool list paging', () => {
+  it('follows nextCursor across pages and keeps the allowed tools from all of them', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, [...ALLOW, 'self.robot.create_reminder']);
+    const started = mcp.start(null);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    await Promise.resolve();
+    expect(t.sent[1].params).toEqual({});
+    mcp.handle({ jsonrpc: '2.0', id: 2, result: { tools: [camera], nextCursor: 'self.robot.create_reminder' } });
+    await Promise.resolve(); await Promise.resolve();
+    expect(t.sent[2]).toMatchObject({ id: 3, method: 'tools/list', params: { cursor: 'self.robot.create_reminder' } });
+    mcp.handle({ jsonrpc: '2.0', id: 3, result: { tools: [{ name: 'self.robot.create_reminder', description: 'r', inputSchema: { type: 'object', properties: {} } }, reboot], nextCursor: '' } });
+    await started;
+    expect(mcp.tools.map(x => x.name)).toEqual(['self.camera.take_photo', 'self.robot.create_reminder']);
+  });
+
+  it('stops paging after a bounded number of pages', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    for (let id = 2; id < 12; id++) {
+      await Promise.resolve(); await Promise.resolve();
+      if (!t.sent.some(m => m.id === id)) break;
+      mcp.handle({ jsonrpc: '2.0', id, result: { tools: [camera], nextCursor: 'again' } });
+    }
+    await started;
+    expect(t.sent.filter(m => m.method === 'tools/list')).toHaveLength(5);
+    expect(mcp.tools).toHaveLength(5);
+  });
+});

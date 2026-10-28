@@ -48,7 +48,7 @@ export const MAX_LEAD_FRAMES = 30;
  */
 export const TTS_STOP_MARGIN_MS = 500;
 /** How many LLM rounds a turn may take (each tool round is one more LLM call). */
-export const MAX_TOOL_ROUNDS = 3;
+export const MAX_TOOL_ROUNDS = 4;
 export const CAMERA_TOOL = 'self.camera.take_photo';
 /** Spoken before a photo when the model said nothing first, so the robot is not silent for the capture. */
 export const CAMERA_FILLER = 'Let me look.';

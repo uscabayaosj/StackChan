@@ -17,6 +17,9 @@ export interface CallOptions { timeoutMs: number; signal?: AbortSignal }
 /** Error from a `tools/call`: the robot's `error.message`, an `isError` result, a timeout or an abort. */
 export class McpCallError extends Error {}
 
+/** Safety stop for a robot that keeps returning a cursor. */
+const MAX_TOOL_PAGES = 5;
+
 interface Pending { resolve(v: any): void; reject(e: Error): void; timer: unknown; onAbort?: () => void; signal?: AbortSignal }
 
 /**
@@ -46,8 +49,15 @@ export class DeviceMcp {
     const capabilities: Record<string, unknown> = vision ? { vision } : {};
     try {
       await this.request('initialize', { protocolVersion: '2024-11-05', capabilities, clientInfo: { name: 'saoirse-server', version: '1' } }, { timeoutMs });
-      const res = await this.request('tools/list', {}, { timeoutMs });
-      const list = Array.isArray(res?.tools) ? res.tools : [];
+      // The robot pages its tool list at ~8 KB (`nextCursor`); collect every page.
+      const list: any[] = [];
+      let cursor = '';
+      for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+        const res = await this.request('tools/list', cursor ? { cursor } : {}, { timeoutMs });
+        if (Array.isArray(res?.tools)) list.push(...res.tools);
+        cursor = typeof res?.nextCursor === 'string' ? res.nextCursor : '';
+        if (!cursor) break;
+      }
       this._tools = list
         .filter((x: any) => x && typeof x.name === 'string' && this.allow.has(x.name))
         .map((x: any) => ({ name: x.name, description: typeof x.description === 'string' ? x.description : '', inputSchema: x.inputSchema ?? { type: 'object', properties: {} } }));
