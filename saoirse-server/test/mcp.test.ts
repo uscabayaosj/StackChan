@@ -114,7 +114,7 @@ describe('DeviceMcp tool list paging', () => {
     expect(mcp.tools.map(x => x.name)).toEqual(['self.camera.take_photo', 'self.robot.create_reminder']);
   });
 
-  it('stops paging after a bounded number of pages', async () => {
+  it('stops paging after a bounded number of pages, and keeps each tool once', async () => {
     const t = makeTransport();
     const mcp = new DeviceMcp(t, ALLOW);
     const started = mcp.start(null);
@@ -122,10 +122,37 @@ describe('DeviceMcp tool list paging', () => {
     for (let id = 2; id < 12; id++) {
       await Promise.resolve(); await Promise.resolve();
       if (!t.sent.some(m => m.id === id)) break;
-      mcp.handle({ jsonrpc: '2.0', id, result: { tools: [camera], nextCursor: 'again' } });
+      mcp.handle({ jsonrpc: '2.0', id, result: { tools: [camera], nextCursor: `page${id}` } });
     }
     await started;
     expect(t.sent.filter(m => m.method === 'tools/list')).toHaveLength(5);
-    expect(mcp.tools).toHaveLength(5);
+    expect(mcp.tools.map(x => x.name)).toEqual(['self.camera.take_photo']);
+  });
+
+  it('a repeated cursor ends paging', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    await Promise.resolve();
+    mcp.handle({ jsonrpc: '2.0', id: 2, result: { tools: [camera], nextCursor: 'same' } });
+    await Promise.resolve(); await Promise.resolve();
+    mcp.handle({ jsonrpc: '2.0', id: 3, result: { tools: [], nextCursor: 'same' } });
+    await started;
+    expect(t.sent.filter(m => m.method === 'tools/list')).toHaveLength(2);
+  });
+
+  it('a failed later page keeps the tools from earlier pages', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    await Promise.resolve();
+    mcp.handle({ jsonrpc: '2.0', id: 2, result: { tools: [camera], nextCursor: 'more' } });
+    await Promise.resolve(); await Promise.resolve();
+    mcp.handle({ jsonrpc: '2.0', id: 3, error: { message: 'busy' } });
+    await started;
+    expect(mcp.tools.map(x => x.name)).toEqual(['self.camera.take_photo']);
+    expect(t.logs.some(l => l.includes('page 2 failed, keeping earlier pages: busy'))).toBe(true);
   });
 });

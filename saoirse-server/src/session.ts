@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
-import { FRAME_MS, OUTPUT_SAMPLE_RATE, rms, type OpusCodec } from './opus.js';
+import { FRAME_MS, OUTPUT_SAMPLE_RATE, OUT_FRAME_BYTES, rms, type OpusCodec } from './opus.js';
 import { EnergyVad } from './vad.js';
 import { SentenceAccumulator, extractEmotion, speechText } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
@@ -56,6 +56,12 @@ export const MAX_TOOL_ROUNDS = 4;
 export const CAMERA_TOOL = 'self.camera.take_photo';
 /** Spoken before a photo when the model said nothing first, so the robot is not silent for the capture. */
 export const CAMERA_FILLER = 'Let me look.';
+/**
+ * While tools run after speech has started, send one silent frame this often. The robot's speaking
+ * watchdog leaves the speaking state (and then drops all audio) after a stretch with no audio packet;
+ * a photo or search round can be that long.
+ */
+export const TOOL_KEEPALIVE_MS = 2_000;
 /** Spoken when the model is still asking for tools after the last round. */
 export const LOOP_FILLER = "I'm going in circles. Ask again.";
 
@@ -119,6 +125,7 @@ export class Session {
   private closed = false;
   /** MCP client for the robot's tools (camera, head, lights). */
   readonly mcp: DeviceMcp;
+  private readonly timers: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (h: unknown) => void };
 
   constructor(
     private readonly socket: SessionSocket,
@@ -131,7 +138,7 @@ export class Session {
     this.vad = new EnergyVad({ rmsThreshold: v.rmsThreshold, silenceMs: v.silenceMs, minSpeechMs: v.minSpeechMs, frameMs: FRAME_MS });
     this.lastSpeechAt = deps.now();
     this.startedAt = deps.now();
-    const timers = deps.timers ?? {
+    const timers = this.timers = deps.timers ?? {
       setTimeout: (fn: () => void, ms: number) => { const h = setTimeout(fn, ms); (h as any).unref?.(); return h; },
       clearTimeout: (h: unknown) => clearTimeout(h as any),
     };
@@ -398,7 +405,23 @@ export class Session {
         await flushText();
         if (!/\s$/.test(full)) full += ' ';
         if (calls.some(c => c.name === CAMERA_TOOL) && spoken.length === 0) await speak(CAMERA_FILLER);
-        const results = await this.runTools(calls, signal);
+        // Keep the robot in its speaking state through the tool round (silent frames, see TOOL_KEEPALIVE_MS).
+        let keepAlive: unknown = null;
+        const tick = () => {
+          if (this.abortRequested || !this.socket.isOpen) return;
+          if (ttsStarted) {
+            this.socket.sendBinary(this.deps.codec.encodeFrame(Buffer.alloc(OUT_FRAME_BYTES)));
+            playEnd = Math.max(playEnd, this.deps.now()) + FRAME_MS;
+          }
+          keepAlive = this.timers.setTimeout(tick, TOOL_KEEPALIVE_MS);
+        };
+        keepAlive = this.timers.setTimeout(tick, TOOL_KEEPALIVE_MS);
+        let results: { id: string; text: string }[];
+        try {
+          results = await this.runTools(calls, signal);
+        } finally {
+          this.timers.clearTimeout(keepAlive);
+        }
         working.push({
           role: 'assistant', content: stripTag(roundText).trim() || null,
           tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),

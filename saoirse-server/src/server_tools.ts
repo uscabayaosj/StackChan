@@ -64,8 +64,8 @@ function weatherTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
     },
     async run(args, signal) {
       let { latitude, longitude, place, timezone } = { latitude: home.latitude, longitude: home.longitude, place: home.place, timezone: cfg.deviceTz };
-      const asked = typeof args.place === 'string' ? args.place.trim() : '';
-      if (asked && asked.toLowerCase() !== home.place.toLowerCase()) {
+      const asked = (typeof args.place === 'string' ? args.place.trim() : '') || (home.hasCoordinates ? '' : home.place);
+      if (asked && (asked.toLowerCase() !== home.place.toLowerCase() || !home.hasCoordinates)) {
         const geo = await getJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(asked)}&count=1&language=en&format=json`, fetchImpl, signal);
         const hit = geo?.results?.[0];
         if (!hit) return `No place called "${asked}" was found.`;
@@ -89,7 +89,7 @@ export const SEARCH_SYSTEM_PROMPT =
 
 /** Removes citation markers like [1] or [2][3] and stray markdown emphasis. */
 export function cleanSearchAnswer(text: string): string {
-  return text.replace(/\s*\[\d+(?:[,\s]*\d+)*\](?:\[\d+\])*/g, '').replace(/\*\*?/g, '').replace(/\s+/g, ' ').trim();
+  return text.replace(/\s*\[\d+(?:[,\s]+\d+)*\](?:\[\d+\])*/g, '').replace(/\*\*?/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function webSearchTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
@@ -126,9 +126,9 @@ function webSearchTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
   };
 }
 
-/** The server tools enabled by `cfg.serverTools` (get_weather, web_search, calculate, convert_units). */
+/** The server tools enabled by `cfg.serverTools` (get_weather, web_search, calculate, convert_units, seconds_until). */
 export function createServerTools(cfg: Config, fetchImpl: typeof fetch = fetch): ServerTool[] {
-  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other)];
+  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz)];
   const on = new Set(cfg.serverTools);
   return all.filter(t => on.has(t.spec.function.name));
 }

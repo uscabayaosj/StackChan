@@ -1,17 +1,36 @@
 import type { ServerTool } from './server_tools.js';
+import { localHourMinute } from './clock.js';
 
 /* ------------------------------- calculator ------------------------------- */
 
 type Tok = { t: 'num'; v: number } | { t: 'op'; v: string } | { t: 'lp' } | { t: 'rp' } | { t: 'fn'; v: string } | { t: 'comma' };
-const FUNCS: Record<string, (...a: number[]) => number> = {
-  sqrt: Math.sqrt, abs: Math.abs, round: (x, d = 0) => Math.round(x * 10 ** d) / 10 ** d, floor: Math.floor, ceil: Math.ceil,
-  min: Math.min, max: Math.max, log: Math.log10, ln: Math.log, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+const FUNCS: Record<string, { f: (...a: number[]) => number; min: number; max: number }> = {
+  sqrt: { f: Math.sqrt, min: 1, max: 1 }, abs: { f: Math.abs, min: 1, max: 1 },
+  round: { f: (x, d = 0) => Math.round(x * 10 ** d) / 10 ** d, min: 1, max: 2 },
+  floor: { f: Math.floor, min: 1, max: 1 }, ceil: { f: Math.ceil, min: 1, max: 1 },
+  min: { f: Math.min, min: 1, max: 99 }, max: { f: Math.max, min: 1, max: 99 },
+  log: { f: Math.log10, min: 1, max: 1 }, ln: { f: Math.log, min: 1, max: 1 },
+  sin: { f: Math.sin, min: 1, max: 1 }, cos: { f: Math.cos, min: 1, max: 1 }, tan: { f: Math.tan, min: 1, max: 1 },
 };
 const CONSTS: Record<string, number> = { pi: Math.PI, e: Math.E };
 
+/** Outside brackets "1,250,000" is a number with thousands separators; inside, commas separate arguments. */
+function stripThousands(src: string): string {
+  let out = '';
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '(') depth++;
+    if (c === ')') depth--;
+    if (c === ',' && depth === 0 && /\d$/.test(out) && /^\d{3}(?!\d)/.test(src.slice(i + 1))) continue;
+    out += c;
+  }
+  return out;
+}
+
 function tokenize(src: string): Tok[] {
   const out: Tok[] = [];
-  const s = src.replace(/×/g, '*').replace(/÷/g, '/').replace(/,(?=\d{3}\b)/g, '');
+  const s = stripThousands(src.replace(/×/g, '*').replace(/÷/g, '/'));
   let i = 0;
   while (i < s.length) {
     const c = s[i];
@@ -29,7 +48,9 @@ function tokenize(src: string): Tok[] {
     if ('+-*/^%'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
     if (c === '(') { out.push({ t: 'lp' }); i++; continue; }
     if (c === ')') { out.push({ t: 'rp' }); i++; continue; }
-    if (c === ',') { out.push({ t: 'comma' }); i++; continue; }
+    if (c === ',') {
+      out.push({ t: 'comma' }); i++; continue;
+    }
     throw new Error(`unexpected "${c}"`);
   }
   return out;
@@ -39,13 +60,14 @@ function tokenize(src: string): Tok[] {
 export function evaluate(expr: string): number {
   const toks = tokenize(expr);
   let p = 0;
+  let pct = false; // set when a primary reads "n%"
   const peek = () => toks[p];
   const isOp = (v: string) => { const k = peek(); return k?.t === 'op' && k.v === v; };
   function primary(): number {
     const k = toks[p++];
     if (!k) throw new Error('unexpected end');
     if (k.t === 'num') {
-      if (isOp('%')) { p++; return k.v / 100; } // "15%" as a number is 0.15
+      if (isOp('%')) { p++; pct = true; return k.v / 100; } // "15%" alone is 0.15; "a + 15%" adds 15% of a
       return k.v;
     }
     if (k.t === 'op' && (k.v === '-' || k.v === '+')) { const v = power(); return k.v === '-' ? -v : v; }
@@ -55,19 +77,29 @@ export function evaluate(expr: string): number {
       const args = [expression()];
       while (peek()?.t === 'comma') { p++; args.push(expression()); }
       if (toks[p++]?.t !== 'rp') throw new Error('missing )');
-      return FUNCS[k.v](...args);
+      const fn = FUNCS[k.v];
+      if (args.length < fn.min || args.length > fn.max) throw new Error(`${k.v} takes ${fn.min === fn.max ? fn.min : `${fn.min} to ${fn.max}`} argument${fn.max === 1 ? '' : 's'}, got ${args.length}`);
+      return fn.f(...args);
     }
     throw new Error('syntax error');
   }
   function power(): number { const b = primary(); if (isOp('^')) { p++; return b ** power(); } return b; }
-  function term(): number {
+  function term(): { v: number; pct: boolean } {
+    pct = false;
     let v = power();
-    while (isOp('*') || isOp('/')) { const o = (toks[p++] as any).v; const r = power(); v = o === '*' ? v * r : v / r; }
-    return v;
+    let onlyPct = pct;
+    while (isOp('*') || isOp('/')) { const o = (toks[p++] as any).v; const r = power(); v = o === '*' ? v * r : v / r; onlyPct = false; }
+    return { v, pct: onlyPct };
   }
   function expression(): number {
-    let v = term();
-    while (isOp('+') || isOp('-')) { const o = (toks[p++] as any).v; const r = term(); v = o === '+' ? v + r : v - r; }
+    let v = term().v;
+    while (isOp('+') || isOp('-')) {
+      const o = (toks[p++] as any).v;
+      const r = term();
+      // Calculator semantics: "100 + 10%" is 110, "80 - 25%" is 60.
+      if (r.pct) v = o === '+' ? v * (1 + r.v) : v * (1 - r.v);
+      else v = o === '+' ? v + r.v : v - r.v;
+    }
     return v;
   }
   const v = expression();
@@ -129,8 +161,53 @@ export function convert(value: number, from: string, to: string): { value: numbe
   return { value: (value * ua.f) / ub.f, from: ua.name, to: ub.name };
 }
 
-export function createUtilityTools(timeoutMs: number): ServerTool[] {
+/* ------------------------------ time until ------------------------------- */
+
+/** Parses "18:00", "6pm", "6:30 pm", "noon", "midnight" into minutes after midnight, or null. */
+export function parseClockTime(text: string): number | null {
+  const t = text.trim().toLowerCase().replace(/\./g, '');
+  if (t === 'noon' || t === 'midday') return 12 * 60;
+  if (t === 'midnight') return 0;
+  const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(t);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  if (min > 59) return null;
+  if (m[3]) {
+    if (h < 1 || h > 12) return null;
+    if (m[3] === 'am') h = h === 12 ? 0 : h; else h = h === 12 ? 12 : h + 12;
+  } else if (h > 23 || (!m[2] && h > 23)) return null;
+  return h * 60 + min;
+}
+
+/** Seconds from `at` until the next occurrence of `minutesOfDay` in `timeZone` (1..86400). */
+export function secondsUntil(at: Date, timeZone: string, minutesOfDay: number): number {
+  const { hour, minute } = localHourMinute(at, timeZone);
+  const nowSec = hour * 3600 + minute * 60 + at.getUTCSeconds();
+  let diff = minutesOfDay * 60 - nowSec;
+  if (diff <= 0) diff += 86400;
+  return diff;
+}
+
+export function createUtilityTools(timeoutMs: number, timeZone = 'UTC', now: () => Date = () => new Date()): ServerTool[] {
   return [
+    {
+      timeoutMs,
+      spec: { type: 'function', function: {
+        name: 'seconds_until',
+        description: 'Exact number of seconds from now until a clock time (the next time it comes round, today or tomorrow). Use it for reminders at a time ("at 6 pm") instead of working it out yourself.',
+        parameters: { type: 'object', properties: { time: { type: 'string', description: 'e.g. "18:00", "6pm", "6:30 pm", "noon"' } }, required: ['time'] },
+      } },
+      async run(args) {
+        const text = typeof args.time === 'string' ? args.time : '';
+        const mins = parseClockTime(text);
+        if (mins === null) return `Error: could not read "${text}" as a clock time`;
+        const s = secondsUntil(now(), timeZone, mins);
+        const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+        const hh = String(Math.floor(mins / 60)).padStart(2, '0'), mm = String(mins % 60).padStart(2, '0');
+        return `${hh}:${mm} is ${s} seconds from now (${h > 0 ? `${h} h ` : ''}${m} min)${s > 24 * 3600 - 60 ? ', tomorrow' : ''}.`;
+      },
+    },
     {
       timeoutMs,
       spec: { type: 'function', function: {

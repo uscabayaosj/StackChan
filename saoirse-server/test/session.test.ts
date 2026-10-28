@@ -715,3 +715,38 @@ describe('Session server tools', () => {
     expect(toolMsgs.map(m => m.content)).toEqual(['Error: search HTTP 429', 'Error: get_weather timed out after 5 ms']);
   });
 });
+
+describe('Session tool-round keep-alive', () => {
+  it('sends silent frames during a long tool round after speech started, and stops when it ends', async () => {
+    const env = makeEnv();
+    const timers: { fn: () => void; ms: number }[] = [];
+    env.deps.timers = {
+      setTimeout: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
+      clearTimeout: (h) => { const i = timers.indexOf(h as any); if (i >= 0) timers.splice(i, 1); },
+    };
+    let release!: () => void;
+    env.deps.serverTools = [{
+      timeoutMs: 60_000,
+      spec: { type: 'function', function: { name: 'web_search', description: 's', parameters: {} } },
+      run: () => new Promise<string>(r => { release = () => r('found it'); }),
+    }];
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) { yield '[neutral] Checking. '; yield { type: 'tool_calls' as const, calls: [{ id: 's1', name: 'web_search', arguments: '{"query":"q"}' }] }; }
+      else yield 'Done. ';
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    for (let i = 0; i < 20 && !release; i++) await new Promise(r => setTimeout(r, 0));
+    const before = env.bins.length;
+    const keep = () => timers.find(t => t.ms === 2000)!;
+    const fire = () => { const t = keep(); timers.splice(timers.indexOf(t), 1); t.fn(); };
+    fire(); fire(); fire(); // three keep-alive ticks while the search is pending
+    expect(env.bins.length - before).toBe(3);
+    release();
+    await s.drain();
+    expect(timers.some(t => t.ms === 2000)).toBe(false);
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Checking.', 'Done.']);
+  });
+});

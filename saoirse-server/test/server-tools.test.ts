@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createServerTools, formatForecast, cleanSearchAnswer, describeWeatherCode } from '../src/server_tools.js';
-import { evaluate, convert, tidy, createUtilityTools } from '../src/utility_tools.js';
+import { evaluate, convert, tidy, createUtilityTools, parseClockTime, secondsUntil } from '../src/utility_tools.js';
 import { loadConfig } from '../src/config.js';
 
 const base = { LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'wss://h/api/ws', SAOIRSE_DEVICE_TOKEN: 't', DEVICE_TZ: 'Europe/London' };
@@ -15,13 +15,14 @@ const tool = (name: string, fetchImpl: typeof fetch, c = cfg) => createServerToo
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 describe('config', () => {
-  it('defaults: all four server tools, London home, Perplexity Sonar on the LLM key', () => {
-    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units']);
-    expect(cfg.weather).toEqual({ place: 'London', latitude: 51.5072, longitude: -0.1276 });
+  it('defaults: all five server tools, London home, Perplexity Sonar on the LLM key', () => {
+    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units', 'seconds_until']);
+    expect(cfg.weather).toEqual({ place: 'London', latitude: 51.5072, longitude: -0.1276, hasCoordinates: true });
     expect(cfg.search).toMatchObject({ model: 'perplexity/sonar', apiKey: 'k', baseUrl: 'https://openrouter.ai/api/v1', timeoutMs: 15000 });
     const only = loadConfig({ ...base, SERVER_TOOLS: 'calculate', WEATHER_PLACE: 'Dublin', WEATHER_LATITUDE: '53.33', WEATHER_LONGITUDE: '-6.25' });
     expect(createServerTools(only, fetch).map(t => t.spec.function.name)).toEqual(['calculate']);
-    expect(only.weather).toEqual({ place: 'Dublin', latitude: 53.33, longitude: -6.25 });
+    expect(only.weather).toEqual({ place: 'Dublin', latitude: 53.33, longitude: -6.25, hasCoordinates: true });
+    expect(loadConfig({ ...base, WEATHER_PLACE: 'Dublin' }).weather.hasCoordinates).toBe(false);
   });
 });
 
@@ -106,7 +107,7 @@ describe('calculate', () => {
     expect(() => evaluate('2 3')).toThrow(/syntax/);
   });
   it('the tool answers "expr = value" or an Error line', async () => {
-    const [calc] = createUtilityTools(1000);
+    const calc = createUtilityTools(1000).find(t => t.spec.function.name === 'calculate')!;
     expect(await calc.run({ expression: '48.6 * 1.125 / 4' }, sig)).toBe('48.6 * 1.125 / 4 = 13.6688');
     expect(await calc.run({ expression: 'rm -rf' }, sig)).toMatch(/^Error: /);
     expect(tidy(0.1 + 0.2)).toBe('0.3');
@@ -135,9 +136,66 @@ describe('convert_units', () => {
     expect(() => convert(1, 'C', 'kg')).toThrow(/can't convert/);
   });
   it('the tool answers "value from = value to" or an Error line', async () => {
-    const conv = createUtilityTools(1000)[1];
+    const conv = createUtilityTools(1000).find(t => t.spec.function.name === 'convert_units')!;
     expect(await conv.run({ value: 180, from: 'C', to: 'F' }, sig)).toBe('180 °C = 356 °F');
     expect(await conv.run({ value: 2, from: 'cups', to: 'ml' }, sig)).toBe('2 cup = 473.176 ml');
     expect(await conv.run({ value: 'lots', from: 'g', to: 'kg' }, sig)).toBe('Error: value must be a number');
+  });
+});
+
+describe('review fixes', () => {
+  it('calculator: percentages added to a number, thousands separators only outside brackets, argument counts', () => {
+    expect(evaluate('100 + 10%')).toBeCloseTo(110, 9);
+    expect(evaluate('80 - 25%')).toBeCloseTo(60, 9);
+    expect(evaluate('64.50 + 18%')).toBeCloseTo(76.11, 9);
+    expect(evaluate('(100 + 10%) / 2')).toBeCloseTo(55, 9);
+    expect(evaluate('10% * 50 + 5')).toBe(10);
+    expect(evaluate('max(1,250)')).toBe(250);
+    expect(evaluate('min(5,100)')).toBe(5);
+    expect(evaluate('1,234,567 / 1')).toBe(1234567);
+    expect(() => evaluate('sqrt(4,9)')).toThrow(/sqrt takes 1 argument, got 2/);
+    expect(() => evaluate('round(1,2,3)')).toThrow(/round takes 1 to 2 arguments, got 3/);
+    expect(() => evaluate('max()')).toThrow();
+  });
+
+  it('seconds_until: parses clock times and counts to the next occurrence in the device zone', async () => {
+    expect(parseClockTime('18:00')).toBe(1080);
+    expect(parseClockTime('6pm')).toBe(1080);
+    expect(parseClockTime('6:30 p.m.')).toBe(1110);
+    expect(parseClockTime('12am')).toBe(0);
+    expect(parseClockTime('12 pm')).toBe(720);
+    expect(parseClockTime('noon')).toBe(720);
+    expect(parseClockTime('midnight')).toBe(0);
+    expect(parseClockTime('25:00')).toBeNull();
+    expect(parseClockTime('13pm')).toBeNull();
+    expect(parseClockTime('teatime')).toBeNull();
+    const at = new Date('2026-10-28T17:40:30Z'); // 17:40:30 in London (GMT)
+    expect(secondsUntil(at, 'Europe/London', 18 * 60)).toBe(1170);
+    expect(secondsUntil(at, 'Europe/London', 17 * 60)).toBe(86400 - 2430);
+    expect(secondsUntil(new Date('2026-07-15T17:40:00Z'), 'Europe/London', 19 * 60)).toBe(1200); // BST
+    const tool = createUtilityTools(1000, 'Europe/London', () => at).find(t => t.spec.function.name === 'seconds_until')!;
+    expect(await tool.run({ time: '6pm' }, sig)).toBe('18:00 is 1170 seconds from now (20 min).');
+    expect(await tool.run({ time: 'teatime' }, sig)).toBe('Error: could not read "teatime" as a clock time');
+  });
+
+  it('search cleaning is linear on long digit runs (no catastrophic backtracking)', () => {
+    const t0 = Date.now();
+    cleanSearchAnswer('[' + '1'.repeat(5000) + 'x');
+    cleanSearchAnswer('A [' + '1 '.repeat(3000) + '.');
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+
+  it('weather: a WEATHER_PLACE without coordinates is geocoded, not paired with London', async () => {
+    const urls: string[] = [];
+    const c = loadConfig({ ...base, WEATHER_PLACE: 'Dublin' });
+    const fetchImpl = (async (u: string) => {
+      urls.push(u);
+      if (u.includes('geocoding')) return json({ results: [{ name: 'Dublin', country: 'Ireland', latitude: 53.33, longitude: -6.25, timezone: 'Europe/Dublin' }] });
+      return json(forecast);
+    }) as unknown as typeof fetch;
+    const text = await tool('get_weather', fetchImpl, c).run({}, sig);
+    expect(urls[0]).toContain('geocoding-api.open-meteo.com');
+    expect(urls[1]).toContain('latitude=53.33&longitude=-6.25');
+    expect(text).toMatch(/^Dublin, Ireland now:/);
   });
 });

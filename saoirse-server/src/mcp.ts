@@ -53,12 +53,22 @@ export class DeviceMcp {
       const list: any[] = [];
       let cursor = '';
       for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-        const res = await this.request('tools/list', cursor ? { cursor } : {}, { timeoutMs });
+        let res: any;
+        try {
+          res = await this.request('tools/list', cursor ? { cursor } : {}, { timeoutMs });
+        } catch (err) {
+          if (page === 0) throw err;
+          this.t.log(`mcp tools/list page ${page + 1} failed, keeping earlier pages: ${(err as Error).message}`);
+          break;
+        }
         if (Array.isArray(res?.tools)) list.push(...res.tools);
-        cursor = typeof res?.nextCursor === 'string' ? res.nextCursor : '';
-        if (!cursor) break;
+        const next = typeof res?.nextCursor === 'string' ? res.nextCursor : '';
+        if (!next || next === cursor) break;
+        cursor = next;
       }
+      const seen = new Set<string>();
       this._tools = list
+        .filter((x: any) => x && typeof x.name === 'string' && !seen.has(x.name) && seen.add(x.name))
         .filter((x: any) => x && typeof x.name === 'string' && this.allow.has(x.name))
         .map((x: any) => ({ name: x.name, description: typeof x.description === 'string' ? x.description : '', inputSchema: x.inputSchema ?? { type: 'object', properties: {} } }));
       this.t.log(`mcp tools: ${this._tools.map(t => t.name).join(', ') || '(none)'}`);

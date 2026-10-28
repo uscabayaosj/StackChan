@@ -38,7 +38,7 @@ export interface Config {
   /** Server-side tools offered to the LLM: get_weather, web_search, calculate, convert_units. */
   serverTools: string[];
   /** Home for the weather tool. */
-  weather: { place: string; latitude: number; longitude: number };
+  weather: { place: string; latitude: number; longitude: number; hasCoordinates: boolean };
   /** Web search: an OpenAI-compatible model that searches as it answers (Perplexity Sonar on OpenRouter). */
   search: { baseUrl: string; apiKey: string; model: string; timeoutMs: number };
   /** Where the robot uploads photos (`/api/vision`); derived from PUBLIC_WS_URL unless PUBLIC_VISION_URL is set. */
@@ -142,12 +142,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
     deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
-    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units').split(',').map(s => s.trim()).filter(Boolean),
-    weather: {
-      place: env.WEATHER_PLACE || 'London',
-      latitude: num(env, 'WEATHER_LATITUDE', 51.5072),
-      longitude: num(env, 'WEATHER_LONGITUDE', -0.1276),
-    },
+    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until').split(',').map(s => s.trim()).filter(Boolean),
+    // Home for the weather tool. A WEATHER_PLACE without both coordinates is geocoded on use, never
+    // paired with London's coordinates.
+    weather: (() => {
+      const place = env.WEATHER_PLACE || 'London';
+      const hasLat = !!env.WEATHER_LATITUDE, hasLon = !!env.WEATHER_LONGITUDE;
+      const londonDefault = !env.WEATHER_PLACE && !hasLat && !hasLon;
+      return {
+        place,
+        latitude: num(env, 'WEATHER_LATITUDE', 51.5072),
+        longitude: num(env, 'WEATHER_LONGITUDE', -0.1276),
+        hasCoordinates: londonDefault || (hasLat && hasLon),
+      };
+    })(),
     search: {
       baseUrl: env.SEARCH_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
       apiKey: env.SEARCH_API_KEY || req(env, 'LLM_API_KEY'),
