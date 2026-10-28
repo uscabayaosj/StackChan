@@ -623,6 +623,42 @@ describe('Session robot tools', () => {
     expect(sentences(env)).toEqual(['Let me look.', 'No luck.']);
   });
 
+  it('never sends the robot a tool it did not offer, and says why at once', async () => {
+    const env = makeEnv();
+    let second: any[] = [];
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([
+        { id: 'a', name: 'create_reminder', arguments: '{"duration_seconds":60}' },
+        { id: 'b', name: 'self.reboot', arguments: '{}' },
+      ]);
+      else { second = messages; yield '[neutral] Cannot. '; }
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await withTools(env, s, () => ({ result: { content: [{ type: 'text', text: 'true' }], isError: false } }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'mcp' && m.payload.method === 'tools/call')).toHaveLength(0);
+    expect(second.filter(m => m.role === 'tool').map(m => m.content)).toEqual([
+      "Error: there is no tool called create_reminder. You can't do that right now; say so briefly.",
+      "Error: there is no tool called self.reboot. You can't do that right now; say so briefly."]);
+  });
+
+  it('while the robot is still listing its tools, a robot tool call is answered with "still starting up"', async () => {
+    const env = makeEnv();
+    let second: any[] = [];
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'a', name: 'self.robot.create_reminder', arguments: '{}' }]);
+      else { second = messages; yield '[neutral] Hold on. '; }
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'mcp' && m.payload.method === 'tools/call')).toHaveLength(0);
+    expect(second.find(m => m.role === 'tool').content).toMatch(/still starting up/);
+  });
+
   it('stops after MAX_TOOL_ROUNDS rounds of tool calls and says so', async () => {
     const env = makeEnv();
     let n = 0;

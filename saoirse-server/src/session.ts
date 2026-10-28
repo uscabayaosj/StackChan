@@ -470,6 +470,11 @@ export class Session {
       try {
         if (serverTool) {
           text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s));
+        } else if (!this.mcp.has(call.name)) {
+          // Never send the robot a tool it didn't offer: it answers slowly, and only with an error.
+          text = this.mcp.loading
+            ? 'Error: your robot tools are still starting up. Say so briefly and ask them to try again in a moment.'
+            : `Error: there is no tool called ${call.name}. You can't do that right now; say so briefly.`;
         } else {
           text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
           if (isCamera) text = cameraResultText(text);

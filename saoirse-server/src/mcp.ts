@@ -19,6 +19,8 @@ export class McpCallError extends Error {}
 
 /** Safety stop for a robot that keeps returning a cursor. */
 const MAX_TOOL_PAGES = 5;
+/** A robot busy just after waking can take over 8 s to list its tools; ask this many times before giving up. */
+const LIST_ATTEMPTS = 3;
 
 interface Pending { resolve(v: any): void; reject(e: Error): void; timer: unknown; onAbort?: () => void; signal?: AbortSignal }
 
@@ -31,6 +33,10 @@ export class DeviceMcp {
   private pending = new Map<number, Pending>();
   private _tools: DeviceTool[] = [];
   private allow: Set<string>;
+  private _loading = false;
+  /** Ids of first-page `tools/list` requests that timed out; a late reply to one still answers the current attempt. */
+  private staleList = new Set<number>();
+  private listWaiter: number | null = null;
 
   constructor(private readonly t: McpTransport, allowedTools: string[]) {
     this.allow = new Set(allowedTools);
@@ -38,6 +44,12 @@ export class DeviceMcp {
 
   /** Tools the robot advertised that are on the allow list (empty until `tools/list` has been answered). */
   get tools(): DeviceTool[] { return this._tools; }
+
+  /** True while `start()` is still waiting for the robot's tool list. */
+  get loading(): boolean { return this._loading; }
+
+  /** Whether the robot advertised (and the allow list permits) a tool of this name. */
+  has(name: string): boolean { return this._tools.some(t => t.name === name); }
 
   /** OpenAI function tools for the LLM. */
   toolSpecs(): ToolSpec[] {
@@ -47,6 +59,7 @@ export class DeviceMcp {
   /** Tell the robot where to upload photos, then ask for its tools. Resolves when the tool list is in (or fails). */
   async start(vision: { url: string; token: string } | null, timeoutMs = 8_000): Promise<void> {
     const capabilities: Record<string, unknown> = vision ? { vision } : {};
+    this._loading = true;
     try {
       await this.request('initialize', { protocolVersion: '2024-11-05', capabilities, clientInfo: { name: 'saoirse-server', version: '1' } }, { timeoutMs });
       // The robot pages its tool list at ~8 KB (`nextCursor`); collect every page.
@@ -55,7 +68,7 @@ export class DeviceMcp {
       for (let page = 0; page < MAX_TOOL_PAGES; page++) {
         let res: any;
         try {
-          res = await this.request('tools/list', cursor ? { cursor } : {}, { timeoutMs });
+          res = page === 0 ? await this.firstListPage(timeoutMs) : await this.request('tools/list', { cursor }, { timeoutMs });
         } catch (err) {
           if (page === 0) throw err;
           this.t.log(`mcp tools/list page ${page + 1} failed, keeping earlier pages: ${(err as Error).message}`);
@@ -74,6 +87,24 @@ export class DeviceMcp {
       this.t.log(`mcp tools: ${this._tools.map(t => t.name).join(', ') || '(none)'}`);
     } catch (err) {
       this.t.log(`mcp start failed: ${(err as Error).message}`);
+    } finally {
+      this._loading = false;
+      this.listWaiter = null;
+    }
+  }
+
+  /** First `tools/list` page, asked up to LIST_ATTEMPTS times; a late answer to an earlier ask is accepted. */
+  private async firstListPage(timeoutMs: number): Promise<any> {
+    for (let attempt = 1; ; attempt++) {
+      const id = this.nextId;
+      this.listWaiter = id;
+      try {
+        return await this.request('tools/list', {}, { timeoutMs });
+      } catch (err) {
+        this.staleList.add(id);
+        if (attempt >= LIST_ATTEMPTS || !(err instanceof McpCallError) || !/timed out/.test(err.message)) throw err;
+        this.t.log(`mcp tools/list attempt ${attempt} timed out, asking again`);
+      }
     }
   }
 
@@ -88,6 +119,14 @@ export class DeviceMcp {
   handle(payload: any): void {
     if (!payload || typeof payload !== 'object') return;
     const id = payload.id;
+    if (typeof id === 'number' && this.staleList.has(id) && payload.result && this.listWaiter !== null && this.pending.has(this.listWaiter)) {
+      this.staleList.delete(id);
+      this.t.log(`mcp late tools/list reply accepted`);
+      const w = this.pending.get(this.listWaiter)!;
+      this.settle(this.listWaiter, w);
+      w.resolve(payload.result);
+      return;
+    }
     if (typeof id !== 'number' || !this.pending.has(id)) {
       if (payload.method) this.t.log(`mcp request from robot ignored: ${payload.method}`);
       else this.t.log(`mcp reply with unknown id ignored`);

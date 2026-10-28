@@ -156,3 +156,52 @@ describe('DeviceMcp tool list paging', () => {
     expect(t.logs.some(l => l.includes('page 2 failed, keeping earlier pages: busy'))).toBe(true);
   });
 });
+
+describe('DeviceMcp slow robot at start', () => {
+  const tick = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+  it('asks for the tool list again when the first ask times out', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null, 100);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    await tick();
+    expect(mcp.loading).toBe(true);
+    t.fire();
+    await tick();
+    expect(t.sent[2]).toMatchObject({ id: 3, method: 'tools/list', params: {} });
+    expect(t.logs).toContain('mcp tools/list attempt 1 timed out, asking again');
+    mcp.handle({ jsonrpc: '2.0', id: 3, result: { tools: [camera], nextCursor: '' } });
+    await started;
+    expect(mcp.has('self.camera.take_photo')).toBe(true);
+    expect(mcp.loading).toBe(false);
+  });
+
+  it('accepts a late reply to an earlier ask', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null, 100);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    await tick();
+    t.fire();
+    await tick();
+    mcp.handle({ jsonrpc: '2.0', id: 2, result: { tools: [camera], nextCursor: '' } });
+    await started;
+    expect(t.logs).toContain('mcp late tools/list reply accepted');
+    expect(mcp.tools.map(x => x.name)).toEqual(['self.camera.take_photo']);
+    expect(t.timers.size).toBe(0);
+  });
+
+  it('gives up after three asks', async () => {
+    const t = makeTransport();
+    const mcp = new DeviceMcp(t, ALLOW);
+    const started = mcp.start(null, 100);
+    mcp.handle({ jsonrpc: '2.0', id: 1, result: {} });
+    for (let i = 0; i < 3; i++) { await tick(); t.fire(); }
+    await started;
+    expect(t.sent.filter(m => m.method === 'tools/list')).toHaveLength(3);
+    expect(t.logs.at(-1)).toMatch(/mcp start failed: tools\/list timed out/);
+    expect(mcp.loading).toBe(false);
+    expect(mcp.tools).toEqual([]);
+  });
+});
