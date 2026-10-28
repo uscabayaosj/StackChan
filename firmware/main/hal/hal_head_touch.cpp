@@ -25,6 +25,9 @@ struct TouchConfig {
     // While stroking, each further move of swipe_threshold (at most this often) is another stroke.
     uint32_t restroke_ms = 300;
     // A tap is a touch released this quickly without a stroke; two within double_tap_ms make a double tap.
+    // Electrical noise produces touches of at most ~150 ms (measured untouched); a stroke only counts once
+    // contact has lasted this long, so a noise blip landing unevenly on the pads can't read as a stroke.
+    uint32_t min_stroke_contact_ms = 200;
     uint32_t tap_max_ms    = 280;
     uint32_t double_tap_ms = 450;
 };
@@ -52,6 +55,14 @@ struct TouchData {
         return max_val;
     }
 
+    // Hysteresis. With the AI app's radio running, this robot's pads show phantom touches at the
+    // chip's weakest level only (intensity 1: 185 of 185 noise readings in 3.5 min hands-off, while a
+    // finger reads 3). A touch therefore starts only at intensity 2+, then lasts while any pad stays at
+    // 1+. Verified on the robot: 12 real touches registered, then 0 phantom touches in ~5 min untouched.
+    bool starts_touch() const
+    {
+        return get_max_intensity() >= 2;
+    }
     bool is_touched() const
     {
         return get_max_intensity() >= 1;
@@ -73,7 +84,7 @@ public:
 
         switch (current_state) {
             case TouchState::IDLE:
-                if (data.is_touched()) {
+                if (data.starts_touch()) {
                     current_state    = TouchState::TOUCHED;
                     initial_position = data.get_position();
                     touch_started_ms = now;
@@ -96,7 +107,8 @@ public:
                 } else {
                     int16_t current_pos = data.get_position();
                     int16_t delta       = current_pos - initial_position;
-                    if (delta > config.swipe_threshold || delta < -config.swipe_threshold) {
+                    const bool long_enough = now - touch_started_ms >= config.min_stroke_contact_ms;
+                    if (long_enough && (delta > config.swipe_threshold || delta < -config.swipe_threshold)) {
                         gesture = delta > 0 ? HeadPetGesture::SwipeForward : HeadPetGesture::SwipeBackward;
                     } else if (now - touch_started_ms >= config.hold_pet_ms) {
                         gesture = HeadPetGesture::SwipeForward;  // a resting hand is petting too
