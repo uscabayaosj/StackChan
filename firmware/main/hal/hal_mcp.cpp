@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include <stdexcept>
 #include <mooncake_log.h>
 #include <mcp_server.h>
 #include <stackchan/stackchan.h>
@@ -61,6 +62,10 @@ void Hal::xiaozhi_mcp_init()
                            LvglLockGuard lock;
 
                            auto& motion = GetStackChan().motion();
+                           // Locked while she's lying on her side or being shaken: don't drive the servos then.
+                           if (motion.isModifyLocked()) {
+                               throw std::runtime_error("Head can't move right now (fallen over or being shaken)");
+                           }
                            if (pitch != -9999) {
                                motion.pitchServo().moveWithSpeed(pitch * 10, speed);
                            }

@@ -1,5 +1,5 @@
 diff --git a/main/application.cc b/main/application.cc
-index d69d43d..479a176 100644
+index d69d43d..0312091 100644
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -1,14 +1,15 @@
@@ -30,10 +30,10 @@ index d69d43d..479a176 100644
  
 +// Speaking watchdog. If the server's `tts stop` never arrives (Wi-Fi dropped mid-reply), the
 +// device would otherwise sit in kDeviceStateSpeaking until the WebSocket times out (~150 s).
-+// Leave speaking when no audio packet has arrived for this long. 8 s cannot fire on a healthy
-+// connection: the server sends at most 30 frames (1.8 s) ahead of playback, and the TTS gap
-+// between sentences of one reply stays under 3 s.
-+static constexpr uint32_t kSpeakingAudioTimeoutMs = 8000;
++// Leave speaking when no audio packet has arrived for this long. 20 s cannot fire on a healthy
++// connection: the server sends at most 30 frames (1.8 s) ahead of playback, the TTS gap between
++// sentences stays under 3 s, and during tool rounds (photo, search) it sends a silent frame every 2 s.
++static constexpr uint32_t kSpeakingAudioTimeoutMs = 20000;
 +
 +static inline uint32_t NowMs() {
 +    return static_cast<uint32_t>(esp_timer_get_time() / 1000);

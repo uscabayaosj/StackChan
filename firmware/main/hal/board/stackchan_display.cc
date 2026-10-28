@@ -9,6 +9,7 @@
 #include <esp_lvgl_port.h>
 #include <esp_psram.h>
 #include <vector>
+#include <atomic>
 #include <cstring>
 #include <src/misc/cache/lv_cache.h>
 #include <settings.h>
@@ -230,6 +231,19 @@ lv_disp_t* StackChanAvatarDisplay::GetLvglDisplay()
 
 #include <hal/board/hal_bridge.h>
 
+// Screen tap and head double tap share one 2 s debounce, so the two can't toggle the chat twice.
+// Called from the LVGL task (tap) and the head-touch task (double tap); ToggleChatState only sets an event bit.
+static void ToggleChatDebounced()
+{
+    static std::atomic<uint32_t> last_toggle_tick{0};
+    const uint32_t now  = GetHAL().millis();
+    uint32_t last       = last_toggle_tick.load();
+    if (last != 0 && now - last < 2000) return;
+    if (!hal_bridge::is_xiaozhi_ready()) return;
+    if (!last_toggle_tick.compare_exchange_strong(last, now)) return;  // another task toggled first
+    hal_bridge::toggle_xiaozhi_chat_state();
+}
+
 void StackChanAvatarDisplay::SetupUI()
 {
     // Prevent duplicate calls - if already called, return early
@@ -252,18 +266,7 @@ void StackChanAvatarDisplay::SetupUI()
     ESP_LOGI(TAG, "Creating Stack-chan Avatar...");
 
     auto avatar = createAvatar(lv_screen_active());
-    avatar->getPanel()->onClick().connect([]() {
-        static uint32_t last_toggle_tick = 0;
-        const uint32_t now               = GetHAL().millis();
-        if (last_toggle_tick != 0 && now - last_toggle_tick < 2000) {
-            return;
-        }
-
-        if (hal_bridge::is_xiaozhi_ready()) {
-            last_toggle_tick = now;
-            hal_bridge::toggle_xiaozhi_chat_state();
-        }
-    });
+    avatar->getPanel()->onClick().connect([]() { ToggleChatDebounced(); });
 
     stackchan.attachAvatar(std::move(avatar));
     stackchan.addModifier(std::make_unique<BreathModifier>());
@@ -273,16 +276,10 @@ void StackChanAvatarDisplay::SetupUI()
     // Saoirse: rainbow light bars while being stroked, back to the state colour after.
     stackchan.addModifier(std::make_unique<PetGlowModifier>([this]() { ApplyStateLight(); }));
     stackchan.addModifier(std::make_unique<TipOverModifier>());
-    // Saoirse: a double tap on the head does what a tap on the screen does (wake her, or stop her talking).
+    // Saoirse: a double tap on the head wakes her when she's idle. Only from idle: a quick pat-pat
+    // while she talks or listens is affection, not a request to interrupt or close the conversation.
     GetHAL().onHeadPetGesture.connect([](HeadPetGesture gesture) {
-        if (gesture != HeadPetGesture::DoubleTap) return;
-        static uint32_t last_toggle_tick = 0;
-        const uint32_t now               = GetHAL().millis();
-        if (last_toggle_tick != 0 && now - last_toggle_tick < 2000) return;
-        if (hal_bridge::is_xiaozhi_ready()) {
-            last_toggle_tick = now;
-            hal_bridge::toggle_xiaozhi_chat_state();
-        }
+        if (gesture == HeadPetGesture::DoubleTap && hal_bridge::is_xiaozhi_idle()) ToggleChatDebounced();
     });
 
     preview_image_ = lv_image_create(lv_screen_active());
