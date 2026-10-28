@@ -4,7 +4,7 @@ import { FRAME_MS, OUTPUT_SAMPLE_RATE, rms, type OpusCodec } from './opus.js';
 import { EnergyVad } from './vad.js';
 import { SentenceAccumulator, extractEmotion, speechText } from './text.js';
 import { SYSTEM_PROMPT } from './persona.js';
-import { formatLocalTime } from './clock.js';
+import { formatLocalTime, localHourMinute, spokenTime } from './clock.js';
 import type { ChatMessage, ChatEvent, ToolCall, ToolSpec } from './llm.js';
 import { DeviceMcp } from './mcp.js';
 
@@ -297,7 +297,8 @@ export class Session {
     this.trimHistory();
 
     const localTime = formatLocalTime(new Date(this.deps.now()), this.deps.config.deviceTz);
-    const system = `${SYSTEM_PROMPT}\n\nCurrent local time: ${localTime}`;
+    const { hour, minute } = localHourMinute(new Date(this.deps.now()), this.deps.config.deviceTz);
+    const system = `${SYSTEM_PROMPT}\n\nCurrent local time: ${localTime} (say it as: ${spokenTime(hour, minute)})`;
     const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.history];
     const acc = new SentenceAccumulator();
     let emotionSent = false;

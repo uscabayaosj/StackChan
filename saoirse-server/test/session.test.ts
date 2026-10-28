@@ -506,7 +506,7 @@ describe('Session', () => {
     utter(s, env);
     await s.drain();
     expect(system.startsWith(SYSTEM_PROMPT)).toBe(true);
-    expect(system.split('\n').at(-1)).toBe('Current local time: Tuesday, 27 October 2026, 12:05 GMT+8');
+    expect(system.split('\n').at(-1)).toBe('Current local time: Tuesday, 27 October 2026, 12:05 GMT+8 (say it as: five past twelve in the afternoon)');
   });
 
   it('trims history by whole user/assistant pairs', async () => {
