@@ -18,6 +18,7 @@ static void _imu_task(void* param)
 {
     auto motion_detector = std::make_unique<MotionDetector>();
     motion_detector->setShakeThreshold(16.0f);
+    int samples = 0;
 
     while (1) {
         if (_bmi270 && _bmi270->update()) {
@@ -29,6 +30,21 @@ static void _imu_task(void* param)
             if (motion_detector->isShakeDetected()) {
                 mclog::tagInfo(_tag, "Shake Detected!");
                 GetHAL().onImuMotionEvent.emit(ImuMotionEvent::Shake);
+            }
+
+            float gx, gy, gz;
+            if (++samples == 20) {  // ~2 s after start: which axis carries gravity at rest
+                motion_detector->getGravity(gx, gy, gz);
+                mclog::tagInfo(_tag, "gravity at rest: x {:.2f} y {:.2f} z {:.2f} m/s2", gx, gy, gz);
+            }
+            if (motion_detector->isTipOverDetected()) {
+                motion_detector->getGravity(gx, gy, gz);
+                mclog::tagInfo(_tag, "Tipped over (gravity x {:.2f} y {:.2f} z {:.2f})", gx, gy, gz);
+                GetHAL().onImuMotionEvent.emit(ImuMotionEvent::TipOver);
+            }
+            if (motion_detector->isUprightDetected()) {
+                mclog::tagInfo(_tag, "Upright again");
+                GetHAL().onImuMotionEvent.emit(ImuMotionEvent::Upright);
             }
             // if (motion_detector->isPickUpDetected()) {
             //     mclog::tagInfo(_tag, "Pick Up Detected!");

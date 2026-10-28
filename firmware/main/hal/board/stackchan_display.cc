@@ -270,6 +270,20 @@ void StackChanAvatarDisplay::SetupUI()
     blink_modifier_id_ = stackchan.addModifier(std::make_unique<BlinkModifier>());
     stackchan.addModifier(std::make_unique<HeadPetModifier>());
     stackchan.addModifier(std::make_unique<ImuEventModifier>());
+    // Saoirse: rainbow light bars while being stroked, back to the state colour after.
+    stackchan.addModifier(std::make_unique<PetGlowModifier>([this]() { ApplyStateLight(); }));
+    stackchan.addModifier(std::make_unique<TipOverModifier>());
+    // Saoirse: a double tap on the head does what a tap on the screen does (wake her, or stop her talking).
+    GetHAL().onHeadPetGesture.connect([](HeadPetGesture gesture) {
+        if (gesture != HeadPetGesture::DoubleTap) return;
+        static uint32_t last_toggle_tick = 0;
+        const uint32_t now               = GetHAL().millis();
+        if (last_toggle_tick != 0 && now - last_toggle_tick < 2000) return;
+        if (hal_bridge::is_xiaozhi_ready()) {
+            last_toggle_tick = now;
+            hal_bridge::toggle_xiaozhi_chat_state();
+        }
+    });
 
     preview_image_ = lv_image_create(lv_screen_active());
     lv_obj_set_size(preview_image_, 320, 240);

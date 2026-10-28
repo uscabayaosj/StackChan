@@ -18,7 +18,15 @@ enum class TouchState { IDLE, TOUCHED, SWIPING };
 // 配置参数
 struct TouchConfig {
     uint8_t touch_threshold = 1;
-    int16_t swipe_threshold = 40;  // 使用百分比，范围-100到100
+    // Saoirse: 40 -> 25 so a shorter stroke counts (position runs -100..100 across the three pads).
+    int16_t swipe_threshold = 25;
+    // A hand resting on her head this long counts as petting, without any stroke.
+    uint32_t hold_pet_ms = 450;
+    // While stroking, each further move of swipe_threshold (at most this often) is another stroke.
+    uint32_t restroke_ms = 300;
+    // A tap is a touch released this quickly without a stroke; two within double_tap_ms make a double tap.
+    uint32_t tap_max_ms    = 280;
+    uint32_t double_tap_ms = 450;
 };
 
 // 触摸数据
@@ -61,14 +69,15 @@ public:
     HeadPetGesture update(const TouchData& data)
     {
         HeadPetGesture gesture = HeadPetGesture::None;
+        const uint32_t now     = pdTICKS_TO_MS(data.timestamp);
 
         switch (current_state) {
             case TouchState::IDLE:
                 if (data.is_touched()) {
                     current_state    = TouchState::TOUCHED;
                     initial_position = data.get_position();
+                    touch_started_ms = now;
                     gesture          = HeadPetGesture::Press;
-                    // mclog::tagInfo(_tag, "Touch detected at position: {}", initial_position);
                 }
                 break;
 
@@ -76,19 +85,27 @@ public:
                 if (!data.is_touched()) {
                     current_state = TouchState::IDLE;
                     gesture       = HeadPetGesture::Release;
+                    if (now - touch_started_ms <= config.tap_max_ms) {
+                        if (last_tap_ms != 0 && now - last_tap_ms <= config.double_tap_ms) {
+                            gesture     = HeadPetGesture::DoubleTap;
+                            last_tap_ms = 0;
+                        } else {
+                            last_tap_ms = now;
+                        }
+                    }
                 } else {
-                    // Check for swipe
                     int16_t current_pos = data.get_position();
                     int16_t delta       = current_pos - initial_position;
-
-                    if (delta > config.swipe_threshold) {
-                        current_state = TouchState::SWIPING;
-                        gesture       = HeadPetGesture::SwipeForward;
-                        // mclog::tagInfo(_tag, "Swipe forward detected, delta: {}", delta);
-                    } else if (delta < -config.swipe_threshold) {
-                        current_state = TouchState::SWIPING;
-                        gesture       = HeadPetGesture::SwipeBackward;
-                        // mclog::tagInfo(_tag, "Swipe backward detected, delta: {}", delta);
+                    if (delta > config.swipe_threshold || delta < -config.swipe_threshold) {
+                        gesture = delta > 0 ? HeadPetGesture::SwipeForward : HeadPetGesture::SwipeBackward;
+                    } else if (now - touch_started_ms >= config.hold_pet_ms) {
+                        gesture = HeadPetGesture::SwipeForward;  // a resting hand is petting too
+                    }
+                    if (gesture != HeadPetGesture::None) {
+                        current_state     = TouchState::SWIPING;
+                        last_stroke_pos   = current_pos;
+                        last_stroke_ms    = now;
+                        last_tap_ms       = 0;
                     }
                 }
                 break;
@@ -97,6 +114,16 @@ public:
                 if (!data.is_touched()) {
                     current_state = TouchState::IDLE;
                     gesture       = HeadPetGesture::Release;
+                } else {
+                    // Rubbing back and forth keeps producing strokes, so she keeps reacting.
+                    int16_t current_pos = data.get_position();
+                    int16_t delta       = current_pos - last_stroke_pos;
+                    if ((delta > config.swipe_threshold || delta < -config.swipe_threshold) &&
+                        now - last_stroke_ms >= config.restroke_ms) {
+                        gesture         = delta > 0 ? HeadPetGesture::SwipeForward : HeadPetGesture::SwipeBackward;
+                        last_stroke_pos = current_pos;
+                        last_stroke_ms  = now;
+                    }
                 }
                 break;
         }
@@ -113,6 +140,10 @@ private:
     TouchConfig config;
     TouchState current_state;
     int16_t initial_position;
+    uint32_t touch_started_ms = 0;
+    int16_t last_stroke_pos   = 0;
+    uint32_t last_stroke_ms   = 0;
+    uint32_t last_tap_ms      = 0;
 };
 
 static void _head_touch_update_task(void* param)
@@ -156,7 +187,10 @@ void Hal::head_touch_init()
     };
     static si12t_handle_t si12t;
     si12t_init(&si12t_cfg, &si12t);
-    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
+    // Saoirse: level 3 -> 1. Lower codes are lower capacitance thresholds (Si12T datasheet 12.2.1):
+    // with ChxHL=0 a touch registers at ~0.55% change instead of ~0.95%, about 1.7x more sensitive.
+    // Level 0 (~0.40%) risked false touches from hair and servo noise.
+    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_1);
 
     // xTaskCreateWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, MALLOC_CAP_SPIRAM);
     xTaskCreatePinnedToCoreWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, 1,

@@ -20,7 +20,7 @@
  * @brief
  *
  */
-enum class HeadPetGesture { None, Press, Release, SwipeForward, SwipeBackward };
+enum class HeadPetGesture { None, Press, Release, SwipeForward, SwipeBackward, DoubleTap };
 
 /**
  * @brief
@@ -48,6 +48,10 @@ enum class ImuMotionEvent {
     None = 0,
     Shake,
     PickUp,
+    /** Body tipped onto its side (sideways gravity component high for over a second). */
+    TipOver,
+    /** Upright again after a TipOver. */
+    Upright,
 };
 
 /**
