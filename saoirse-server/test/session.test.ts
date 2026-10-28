@@ -667,3 +667,51 @@ describe('Session robot tools', () => {
     expect(env.logs.some(l => /tool self.camera.take_photo .* -> Error: aborted/.test(l))).toBe(true);
   });
 });
+
+describe('Session server tools', () => {
+  it('runs a server tool on the server (no mcp call), alongside robot tools, and feeds the result back', async () => {
+    const env = makeEnv();
+    const ran: any[] = [];
+    env.deps.serverTools = [{
+      timeoutMs: 1000,
+      spec: { type: 'function', function: { name: 'get_weather', description: 'w', parameters: { type: 'object', properties: {} } } },
+      run: async (args) => { ran.push(args); return 'London now: 8°C, clear sky.'; },
+    }];
+    const rounds: any[][] = [];
+    const offered: any[] = [];
+    env.deps.chat = async function* (messages, _s, tools) {
+      rounds.push(messages); offered.push(tools);
+      if (!messages.some(m => m.role === 'tool')) yield { type: 'tool_calls' as const, calls: [{ id: 'w1', name: 'get_weather', arguments: '{"days":1}' }] };
+      else yield '[neutral] Eight degrees and clear. ';
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(offered[0].map((t: any) => t.function.name)).toEqual(['get_weather']);
+    expect(ran).toEqual([{ days: 1 }]);
+    expect(rounds[1].at(-1)).toEqual({ role: 'tool', tool_call_id: 'w1', content: 'London now: 8°C, clear sky.' });
+    expect(env.sent.filter(m => m.type === 'mcp' && m.payload.method === 'tools/call')).toHaveLength(0);
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Eight degrees and clear.']);
+  });
+
+  it('a failing or slow server tool becomes an Error tool result', async () => {
+    const env = makeEnv();
+    env.deps.serverTools = [
+      { timeoutMs: 1000, spec: { type: 'function', function: { name: 'web_search', description: 's', parameters: {} } }, run: async () => { throw new Error('search HTTP 429'); } },
+      { timeoutMs: 5, spec: { type: 'function', function: { name: 'get_weather', description: 'w', parameters: {} } }, run: (_a, s) => new Promise((_, rej) => s.addEventListener('abort', () => rej(s.reason))) },
+    ];
+    let toolMsgs: any[] = [];
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield { type: 'tool_calls' as const, calls: [{ id: 'a', name: 'web_search', arguments: '{"query":"q"}' }, { id: 'b', name: 'get_weather', arguments: '{}' }] };
+      else { toolMsgs = messages.filter(m => m.role === 'tool'); yield '[sad] No luck. '; }
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(toolMsgs.map(m => m.content)).toEqual(['Error: search HTTP 429', 'Error: get_weather timed out after 5 ms']);
+  });
+});

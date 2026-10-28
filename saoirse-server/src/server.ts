@@ -6,6 +6,7 @@ import { transcribe } from './stt.js';
 import { streamChatEventsWithFallback, type ChatMessage } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
 import { handleVision } from './vision.js';
+import { createServerTools } from './server_tools.js';
 import { bearerMatches, secretMatches } from './auth.js';
 import { Session, type SessionDeps, type SessionSocket } from './session.js';
 import { callWithDeadline, streamWithDeadline } from './deadline.js';
@@ -44,6 +45,7 @@ export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchI
   return {
     config: cfg,
     codec,
+    serverTools: createServerTools(cfg, fetchImpl),
     transcribe: (pcm, signal) =>
       callWithDeadline('STT', cfg.sttTimeoutMs, signal, s => transcribe(cfg.elevenlabs, pcm, fetchImpl, { signal: s })),
     chat: (messages, signal, tools) =>

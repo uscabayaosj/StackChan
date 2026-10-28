@@ -7,6 +7,8 @@ import { SYSTEM_PROMPT } from './persona.js';
 import { formatLocalTime, localHourMinute, spokenTime } from './clock.js';
 import type { ChatMessage, ChatEvent, ToolCall, ToolSpec } from './llm.js';
 import { DeviceMcp } from './mcp.js';
+import { callWithDeadline } from './deadline.js';
+import type { ServerTool } from './server_tools.js';
 
 export interface SessionSocket {
   sendText(json: object): void;
@@ -28,6 +30,8 @@ export interface SessionDeps {
   log(msg: string): void;
   /** Timers for robot tool-call deadlines (defaults to the globals). */
   timers?: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (h: unknown) => void };
+  /** Tools that run on the server (weather, web search), offered alongside the robot's. */
+  serverTools?: ServerTool[];
 }
 
 type State = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -360,7 +364,7 @@ export class Session {
       let calls: ToolCall[] | null = null;
       for (let round = 1; round <= MAX_TOOL_ROUNDS && !this.abortRequested; round++) {
         calls = null;
-        const tools = this.mcp.toolSpecs();
+        const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()];
         let roundText = '';
         // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
         // the face and is never spoken. The tag can be split across chunks, so hold text until it is decided.
@@ -437,11 +441,16 @@ export class Session {
       try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {}; } catch { out.push({ id: call.id, text: 'Error: tool arguments were not valid JSON' }); continue; }
       if (!args || typeof args !== 'object' || Array.isArray(args)) { out.push({ id: call.id, text: 'Error: tool arguments must be a JSON object' }); continue; }
       const isCamera = call.name === CAMERA_TOOL;
-      const timeoutMs = isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
+      const serverTool = this.deps.serverTools?.find(t => t.spec.function.name === call.name);
+      const timeoutMs = serverTool ? serverTool.timeoutMs : isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
       let text: string;
       try {
-        text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
-        if (isCamera) text = cameraResultText(text);
+        if (serverTool) {
+          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s));
+        } else {
+          text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
+          if (isCamera) text = cameraResultText(text);
+        }
       } catch (err) {
         text = `Error: ${(err as Error).message}`;
       }

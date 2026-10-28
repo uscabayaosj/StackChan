@@ -35,6 +35,12 @@ export interface Config {
   deviceTz: string;
   /** Robot MCP tools offered to the LLM (names as the robot advertises them). */
   deviceTools: string[];
+  /** Server-side tools offered to the LLM: get_weather, web_search, calculate, convert_units. */
+  serverTools: string[];
+  /** Home for the weather tool. */
+  weather: { place: string; latitude: number; longitude: number };
+  /** Web search: an OpenAI-compatible model that searches as it answers (Perplexity Sonar on OpenRouter). */
+  search: { baseUrl: string; apiKey: string; model: string; timeoutMs: number };
   /** Where the robot uploads photos (`/api/vision`); derived from PUBLIC_WS_URL unless PUBLIC_VISION_URL is set. */
   publicVisionUrl: string;
   vision: { baseUrl: string; apiKey: string; model: string; timeoutMs: number; maxBytes: number };
@@ -136,6 +142,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
     deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
+    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units').split(',').map(s => s.trim()).filter(Boolean),
+    weather: {
+      place: env.WEATHER_PLACE || 'London',
+      latitude: num(env, 'WEATHER_LATITUDE', 51.5072),
+      longitude: num(env, 'WEATHER_LONGITUDE', -0.1276),
+    },
+    search: {
+      baseUrl: env.SEARCH_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      apiKey: env.SEARCH_API_KEY || req(env, 'LLM_API_KEY'),
+      model: env.SEARCH_MODEL || 'perplexity/sonar',
+      timeoutMs: num(env, 'SEARCH_TIMEOUT_MS', 15_000),
+    },
     publicVisionUrl: env.PUBLIC_VISION_URL || deriveVisionUrl(req(env, 'PUBLIC_WS_URL')),
     vision: {
       baseUrl: env.VISION_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
