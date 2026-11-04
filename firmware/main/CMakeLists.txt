@@ -294,6 +294,7 @@ idf_component_register(SRCS ${SOURCES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
+                        wpa_supplicant
                         esp_pm
                         esp_psram
                         esp_netif
@@ -535,3 +536,6 @@ if ("${size}" AND "${offset}")
 else()
     message(STATUS "Assets partition not found, using v1 partition table")
 endif()
+
+# UCL CAT profile 157, retrieved 2026-11-04. Public trust anchors only.
+target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/hal/utils/wifi_connect/certs/ucl-eduroam.pem" TEXT)

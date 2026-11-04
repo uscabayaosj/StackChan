@@ -735,6 +735,12 @@ public:
         if (level != PowerSaveLevel::LOW_POWER) {
             power_save_timer_->WakeUp();
         }
+        // Deep modem sleep batches packets for a full listen interval. Keep
+        // the radio responsive when external power is available.
+        if (level == PowerSaveLevel::LOW_POWER) {
+            std::lock_guard<std::mutex> lock(power_state_mutex_);
+            if (power_state_.status_valid && power_state_.has_external_power) level = PowerSaveLevel::PERFORMANCE;
+        }
         WifiBoard::SetPowerSaveLevel(level);
     }
 

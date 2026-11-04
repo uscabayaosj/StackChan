@@ -1,0 +1,82 @@
+--- a/wifi_station.cc
++++ b/wifi_station.cc
+@@ -11,6 +11,10 @@
+ #include <esp_netif.h>
+ #include <esp_system.h>
+ #include "ssid_manager.h"
++#include "network_policy.h"
++
++extern std::string stackchan_wifi_preferred();
++extern esp_err_t stackchan_wifi_prepare(const std::string&, const std::string&);
+ 
+ #define TAG "WifiStation"
+ #define WIFI_EVENT_CONNECTED BIT0
+@@ -162,14 +166,22 @@
+ }
+ 
+ void WifiStation::HandleScanResult() {
++    // Diagnostic scans must not disrupt an established station connection.
++    if (IsConnected()) { esp_wifi_clear_ap_list(); return; }
++    connect_queue_.clear();
+     uint16_t ap_num = 0;
+     esp_wifi_scan_get_ap_num(&ap_num);
+-    wifi_ap_record_t *ap_records = (wifi_ap_record_t *)malloc(ap_num * sizeof(wifi_ap_record_t));
++    wifi_ap_record_t *ap_records = (wifi_ap_record_t *)malloc(std::max<size_t>(1, ap_num) * sizeof(wifi_ap_record_t));
++    if (!ap_records) { esp_timer_start_once(timer_handle_, 1000000); return; }
+     esp_wifi_scan_get_ap_records(&ap_num, ap_records);
+-    // sort by rssi descending
+-    std::sort(ap_records, ap_records + ap_num, [](const wifi_ap_record_t& a, const wifi_ap_record_t& b) {
+-        return a.rssi > b.rssi;
+-    });
++    // Keep the explicitly selected SSID first, strongest AP within each group.
++    const auto preferred = stackchan_wifi_preferred();
++    std::vector<stackchan::wifi::Candidate> candidates;
++    for (int i = 0; i < ap_num; ++i) candidates.push_back({reinterpret_cast<const char*>(ap_records[i].ssid), ap_records[i].rssi, static_cast<size_t>(i)});
++    const auto ordered = stackchan::wifi::OrderCandidates(std::move(candidates), preferred);
++    std::vector<wifi_ap_record_t> sorted;
++    for (const auto& candidate : ordered) sorted.push_back(ap_records[candidate.index]);
++    std::copy(sorted.begin(), sorted.end(), ap_records);
+ 
+     auto& ssid_manager = SsidManager::GetInstance();
+     auto ssid_list = ssid_manager.GetSsidList();
+@@ -219,14 +231,23 @@
+ 
+     wifi_config_t wifi_config;
+     bzero(&wifi_config, sizeof(wifi_config));
+-    strcpy((char *)wifi_config.sta.ssid, ap_record.ssid.c_str());
+-    strcpy((char *)wifi_config.sta.password, ap_record.password.c_str());
++    memcpy(wifi_config.sta.ssid, ap_record.ssid.data(), std::min(ap_record.ssid.size(), sizeof(wifi_config.sta.ssid)));
++    memcpy(wifi_config.sta.password, ap_record.password.data(), std::min(ap_record.password.size(), sizeof(wifi_config.sta.password)));
+     if (remember_bssid_) {
+         wifi_config.sta.channel = ap_record.channel;
+         memcpy(wifi_config.sta.bssid, ap_record.bssid, 6);
+         wifi_config.sta.bssid_set = true;
+     }
+-    wifi_config.sta.listen_interval = 10;
++    // Scan all matching BSSIDs instead of accepting the first weak mesh AP.
++    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
++    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
++    wifi_config.sta.listen_interval = 3;
++    if (stackchan_wifi_prepare(ssid_, password_) != ESP_OK) {
++        ESP_LOGE(TAG, "Saved Wi-Fi security profile is unavailable");
++        if (!connect_queue_.empty()) StartConnect();
++        else esp_timer_start_once(timer_handle_, scan_min_interval_microseconds_);
++        return;
++    }
+     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+ 
+     reconnect_count_ = 0;
+@@ -328,6 +349,13 @@
+             this_->on_disconnected_(event->reason);
+         }
+         
++        // Beacon loss/no AP means the radio path changed: rescan other APs now.
++        if (event->reason == WIFI_REASON_BEACON_TIMEOUT || event->reason == WIFI_REASON_NO_AP_FOUND) {
++            this_->connect_queue_.clear();
++            esp_timer_stop(this_->timer_handle_);
++            esp_timer_start_once(this_->timer_handle_, 1000000);
++            return;
++        }
+         if (this_->reconnect_count_ < MAX_RECONNECT_COUNT) {
+             esp_wifi_connect();
+             this_->reconnect_count_++;

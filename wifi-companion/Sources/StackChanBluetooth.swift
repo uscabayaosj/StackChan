@@ -96,10 +96,11 @@ final class StackChanBluetooth: NSObject, @preconcurrency CBCentralManagerDelega
         else { central.connect(peripheral) }
     }
 
-    func configure(ssid: String, password: String) {
+    func configure(profile: NetworkProfile) {
+        let ssid = profile.ssid
         guard canConfigure, !isBusy else { return }
         do {
-            let payload = try WiFiProtocol.configuration(ssid: ssid, password: password)
+            let payload = try profile.configuration()
             guard let target, let characteristic, target.state == .connected, characteristic.isNotifying else {
                 fail("Bluetooth disconnected. Find your StackChan and reconnect.")
                 return
@@ -220,8 +221,9 @@ final class StackChanBluetooth: NSObject, @preconcurrency CBCentralManagerDelega
         }
         operationTimeout?.cancel()
         canConfigure = true
+        UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: "lastStackChanID")
         phase = .ready
-        message = "Connected to StackChan. Enter the new Wi-Fi details below."
+        message = "Connected to StackChan. Choose a saved network or enter Wi-Fi details."
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

@@ -524,7 +524,11 @@ private:
         notify_state(0, "wifiConnecting");
         GetHAL().onAppConfigEvent.emit(AppConfigEvent::TryWifiConnect);
 
-        _wifi_station->AddAuth(ssid, password, band);
+        stackchan::wifi::EnterpriseCredentials enterprise;
+        if (data["security"].is<const char*>()) enterprise.security = data["security"].as<std::string>();
+        if (data["username"].is<const char*>()) enterprise.username = data["username"].as<std::string>();
+        if (data["unixTime"].is<int64_t>()) enterprise.unix_time = data["unixTime"].as<int64_t>();
+        _wifi_station->AddAuth(ssid, password, band, enterprise);
     }
 
     void handle_handshake(std::string_view data)

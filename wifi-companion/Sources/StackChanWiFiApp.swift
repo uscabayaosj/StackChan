@@ -7,89 +7,69 @@ struct StackChanWiFiApp: App {
 
 struct WiFiSetupView: View {
     @State private var bluetooth = StackChanBluetooth()
-    @State private var ssid = UserDefaults.standard.string(forKey: "lastSSID") ?? ""
-    @State private var password = ""
+    @State private var networks = NetworkProfileStore()
+    @State private var editing: NetworkProfile?
+    @State private var pending: NetworkProfile?
+    @State private var manual = NetworkProfile(id: "manual", ssid: "")
     @Environment(\.openURL) private var openURL
-    @FocusState private var focusedField: Field?
-    private enum Field { case network, password }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Label("A new network for your little companion", systemImage: "wifi")
-                        .font(.headline)
-                    Text("On StackChan, open Settings → Wi-Fi → Change Wi-Fi, then tap Next. Keep your iPhone nearby.")
+                    Label("Choose a network for StackChan", systemImage: "wifi").font(.headline)
+                    Text("On the robot, open Settings → Wi-Fi → Change Wi-Fi and tap Next. Then tap a saved network below.")
                         .foregroundStyle(.secondary)
-                    Text("Already says “Ready to Configure”? This app can find connections held by iOS, too.")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
-
-                Section("1 · Choose your StackChan") {
-                    ForEach(bluetooth.devices) { device in
-                        Button {
-                            bluetooth.select(device)
-                        } label: {
-                            HStack {
-                                Image(systemName: "face.smiling")
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(device.name).foregroundStyle(.primary)
-                                    Text(device.deviceID ?? String(device.id.uuidString.prefix(8)))
-                                        .font(.caption.monospaced()).foregroundStyle(.secondary)
-                                    if device.alreadyConnected {
-                                        Text("Connected to iOS").font(.caption).foregroundStyle(.secondary)
+                Section {
+                    ForEach(networks.profiles) { profile in
+                        HStack {
+                            Button {
+                                if networks.savedIDs.contains(profile.id) { connect(profile) }
+                                else { editing = profile }
+                            } label: {
+                                HStack {
+                                    Image(systemName: profile.id == "Saoirse" ? "personalhotspot" : "wifi")
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(profile.ssid).foregroundStyle(.primary)
+                                        Text(networks.savedIDs.contains(profile.id) ? "Tap to connect" : "Add details once")
+                                            .font(.caption).foregroundStyle(.secondary)
                                     }
-                                }
-                                Spacer()
-                                if bluetooth.selectedID == device.id {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                                    Spacer()
                                 }
                             }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("preset-\(profile.id)")
+                            Button { editing = profile } label: { Image(systemName: "pencil.circle") }
+                                .buttonStyle(.borderless).accessibilityLabel("Edit \(profile.ssid)")
                         }
                         .disabled(bluetooth.isBusy)
                     }
-                    Button {
-                        bluetooth.findDevices()
-                    } label: {
-                        HStack {
-                            Label("Find StackChan", systemImage: "arrow.clockwise")
-                            Spacer()
-                            if bluetooth.phase == .scanning { ProgressView() }
-                        }
-                    }
-                    .disabled(bluetooth.isBusy)
+                } header: { Text("Saved networks") } footer: {
+                    Text("Passwords are stored in this iPhone’s Keychain. For Saoirse, turn on Personal Hotspot and Maximise Compatibility first. UCL eduroam needs the updated robot firmware.")
                 }
-
-                if bluetooth.phase != .success {
-                    Section {
-                        TextField("Wi-Fi name", text: $ssid)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .focused($focusedField, equals: .network).submitLabel(.next)
-                            .onSubmit { focusedField = .password }
-                            .accessibilityIdentifier("wifiName")
-                        SecureField("Wi-Fi password", text: $password)
-                            .textContentType(.password)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .focused($focusedField, equals: .password).submitLabel(.go)
-                            .onSubmit { connectWiFi() }
-                            .accessibilityIdentifier("wifiPassword")
-                        Button(action: connectWiFi) {
+                Section("StackChan") {
+                    ForEach(bluetooth.devices) { device in
+                        Button { bluetooth.select(device) } label: {
                             HStack {
-                                Label("Connect StackChan", systemImage: "wifi")
+                                Image(systemName: "face.smiling")
+                                VStack(alignment: .leading) {
+                                    Text(device.name).foregroundStyle(.primary)
+                                    Text(device.deviceID ?? String(device.id.uuidString.prefix(8)))
+                                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
                                 Spacer()
-                                if bluetooth.phase == .verifying { ProgressView() }
+                                if bluetooth.selectedID == device.id { Image(systemName: "checkmark.circle.fill") }
                             }
-                        }
-                        .disabled(!bluetooth.canConfigure || bluetooth.isBusy || ssid.isEmpty)
-                        .accessibilityIdentifier("connectWiFi")
-                    } header: {
-                        Text("2 · Enter Wi-Fi details")
-                    } footer: {
-                        Text("Use a 2.4 GHz network. Leave the password blank only for an open network. Your password is sent directly to StackChan and is not saved by this app.")
+                        }.disabled(bluetooth.isBusy)
                     }
-                    .disabled(bluetooth.phase == .verifying)
+                    Button("Find StackChan", systemImage: "arrow.clockwise") { bluetooth.findDevices() }
+                        .disabled(bluetooth.isBusy)
+                    if let pending {
+                        Text("Ready to send \(pending.ssid). Choose your robot above if needed.").font(.footnote)
+                        Button("Cancel") { self.pending = nil }
+                    }
                 }
-
                 Section {
                     Label(bluetooth.message, systemImage: statusIcon)
                         .foregroundStyle(bluetooth.phase == .success ? .green : .primary)
@@ -99,19 +79,41 @@ struct WiFiSetupView: View {
                             if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                         }
                     }
+                    if let error = networks.errorMessage { Text(error).foregroundStyle(.red) }
                     if bluetooth.phase == .success {
-                        Button("Set up another network") {
-                            password = ""
-                            bluetooth.disconnect()
-                            bluetooth.findDevices()
-                        }
+                        Button("Change network again") { bluetooth.disconnect(); bluetooth.findDevices() }
                     }
                 }
+                Section {
+                    TextField("Wi-Fi name", text: $manual.ssid)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("wifiName")
+                    SecureField("Wi-Fi password", text: $manual.password)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("wifiPassword")
+                    Button("Connect StackChan", systemImage: "wifi") { connect(manual) }
+                        .disabled(manual.ssid.isEmpty || bluetooth.isBusy)
+                        .accessibilityIdentifier("connectWiFi")
+                } header: { Text("Other network") } footer: { Text("Use a 2.4 GHz network. These manual details are not saved.") }
             }
             .navigationTitle("StackChan Wi-Fi")
             .scrollDismissesKeyboard(.interactively)
+            .sheet(item: $editing) { profile in
+                ProfileEditor(profile: profile, saved: networks.savedIDs.contains(profile.id), save: {
+                    try networks.save($0)
+                }, forget: { try networks.forget(profile) })
+            }
             .onChange(of: bluetooth.phase) { _, phase in
-                if phase == .success { password = ""; focusedField = nil }
+                if phase == .ready, let profile = pending { pending = nil; bluetooth.configure(profile: profile) }
+                if phase == .success { manual.password = "" }
+                if phase == .failed { pending = nil }
+            }
+            .onChange(of: bluetooth.devices.map(\.id)) { _, _ in
+                // Reuse only a previously selected robot, never an unknown nearby one.
+                guard pending != nil, !bluetooth.isBusy,
+                      let id = UserDefaults.standard.string(forKey: "lastStackChanID"),
+                      let device = bluetooth.devices.first(where: { $0.id.uuidString == id }) else { return }
+                bluetooth.select(device)
             }
         }
     }
@@ -124,11 +126,53 @@ struct WiFiSetupView: View {
         default: return "info.circle"
         }
     }
+    private func connect(_ profile: NetworkProfile) {
+        if bluetooth.canConfigure && !bluetooth.isBusy { bluetooth.configure(profile: profile) }
+        else { pending = profile; bluetooth.disconnect(); bluetooth.findDevices() }
+    }
+}
 
-    private func connectWiFi() {
-        guard bluetooth.canConfigure, !bluetooth.isBusy, !ssid.isEmpty else { return }
-        focusedField = nil
-        bluetooth.configure(ssid: ssid, password: password)
+private struct ProfileEditor: View {
+    @State var profile: NetworkProfile
+    let saved: Bool
+    let save: (NetworkProfile) throws -> Void
+    let forget: () throws -> Void
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(profile.ssid) {
+                    if profile.security == .uclEduroam {
+                        TextField("UCL user ID, e.g. abc123@ucl.ac.uk", text: $profile.username)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.emailAddress)
+                            .textContentType(.username)
+                        Text("Use your UCL user ID followed by @ucl.ac.uk. Your email address may be different.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    SecureField(profile.security == .uclEduroam ? "UCL password" : "Wi-Fi password", text: $profile.password)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.password)
+                    Text("Saved only in this iPhone’s Keychain. Sent directly to your robot over Bluetooth when you connect.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let error { Text(error).foregroundStyle(.red) }
+                if saved {
+                    Button("Forget saved details", role: .destructive) {
+                        do { try forget(); dismiss() } catch { self.error = error.localizedDescription }
+                    }
+                }
+            }
+            .navigationTitle("Edit \(profile.ssid)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        do { try save(profile); dismiss() } catch { self.error = error.localizedDescription }
+                    }
+                }
+            }
+        }
     }
 }
 

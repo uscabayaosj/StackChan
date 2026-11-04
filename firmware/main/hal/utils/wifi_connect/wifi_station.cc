@@ -22,13 +22,15 @@ StackChanWifiStation::~StackChanWifiStation()
     if (event_group_) vEventGroupDelete(event_group_);
 }
 
-void StackChanWifiStation::AddAuth(const std::string& ssid, const std::string& password, const WifiBandInfo& band)
+void StackChanWifiStation::AddAuth(const std::string& ssid, const std::string& password, const WifiBandInfo& band,
+                                   const stackchan::wifi::EnterpriseCredentials& enterprise)
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         ssid_     = ssid;
         password_ = password;
         band_     = band;
+        enterprise_ = enterprise;
         ip_address_.clear();
         reconnect_count_        = 0;
         associated_             = false;
@@ -76,7 +78,10 @@ void StackChanWifiStation::connectCurrent()
         memcpy(config.sta.ssid, ssid_.data(), ssid_.size());
         memcpy(config.sta.password, password_.data(), password_.size());
     }
-    auto error = esp_wifi_set_config(WIFI_IF_STA, &config);
+    config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    auto error = stackchan::wifi::ConfigureSecurity(ssid_, password_, enterprise_);
+    if (error == ESP_OK) error = esp_wifi_set_config(WIFI_IF_STA, &config);
     if (error != ESP_OK) {
         fail({"invalid_configuration", "Wi-Fi configuration was rejected: " + std::string(esp_err_to_name(error)), 0,
               error});
@@ -321,6 +326,12 @@ void StackChanWifiStation::IpEventHandler(void* arg, esp_event_base_t, int32_t, 
         station->is_connecting_   = false;
     }
     // Replace stored credentials only after the new network has assigned an IP.
+    const auto saved = stackchan::wifi::SaveNetworkChoice(ssid, station->enterprise_);
+    if (saved != ESP_OK) {
+        // A successful association must not be reported as saved if NVS failed.
+        if (station->on_connect_failed_) station->on_connect_failed_(ssid, {"storage_failed", "Connected, but could not save network settings."});
+        return;
+    }
     SsidManager::GetInstance().AddSsid(ssid, password);
     xEventGroupSetBits(station->event_group_, WIFI_EVENT_CONNECTED);
     if (station->on_connected_) station->on_connected_(ssid);

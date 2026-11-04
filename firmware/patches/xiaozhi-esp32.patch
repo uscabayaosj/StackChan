@@ -1,5 +1,5 @@
 diff --git a/main/application.cc b/main/application.cc
-index d69d43d..0312091 100644
+index d69d43d..fb2a944 100644
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -1,14 +1,15 @@
@@ -42,7 +42,7 @@ index d69d43d..0312091 100644
  
  Application::Application() {
      event_group_ = xEventGroupCreate();
-@@ -249,6 +261,19 @@ void Application::Run() {
+@@ -249,6 +261,20 @@ void Application::Run() {
              clock_ticks_++;
              auto display = Board::GetInstance().GetDisplay();
              display->UpdateStatusBar();
@@ -51,6 +51,7 @@ index d69d43d..0312091 100644
 +            if (GetDeviceState() == kDeviceStateSpeaking) {
 +                uint32_t silent_ms = NowMs() - last_speaking_audio_ms_.load(std::memory_order_relaxed);
 +                if (silent_ms >= kSpeakingAudioTimeoutMs) {
++                    speech_reception_.Stop();
 +                    ESP_LOGW(TAG, "Speaking watchdog: no audio for %lu ms, leaving speaking state", (unsigned long)silent_ms);
 +                    if (listening_mode_ == kListeningModeManualStop) {
 +                        SetDeviceState(kDeviceStateIdle);
@@ -62,7 +63,7 @@ index d69d43d..0312091 100644
          
              // Print debug info every 10 seconds
              if (clock_ticks_ % 10 == 0) {
-@@ -399,6 +424,7 @@ void Application::CheckNewVersion() {
+@@ -399,6 +425,7 @@ void Application::CheckNewVersion() {
      const int MAX_RETRY = 10;
      int retry_count = 0;
      int retry_delay = 10; // Initial retry delay in seconds
@@ -70,7 +71,7 @@ index d69d43d..0312091 100644
  
      auto& board = Board::GetInstance();
      while (true) {
-@@ -441,15 +467,18 @@ void Application::CheckNewVersion() {
+@@ -441,15 +468,18 @@ void Application::CheckNewVersion() {
  
          // No new version, mark the current version as valid
          ota_->MarkCurrentVersionValid();
@@ -93,23 +94,60 @@ index d69d43d..0312091 100644
          }
  
          // This will block the loop until the activation is done or timeout
-@@ -497,6 +526,7 @@ void Application::InitializeProtocol() {
+@@ -491,13 +521,20 @@ void Application::InitializeProtocol() {
+     });
+ 
+     protocol_->OnNetworkError([this](const std::string& message) {
++        speech_reception_.Stop();
+         last_error_message_ = message;
+         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+     });
      
      protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-         if (GetDeviceState() == kDeviceStateSpeaking) {
-+            last_speaking_audio_ms_.store(NowMs(), std::memory_order_relaxed);
-             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+-        if (GetDeviceState() == kDeviceStateSpeaking) {
+-            audio_service_.PushPacketToDecodeQueue(std::move(packet));
++        if (speech_reception_.AcceptsAudio()) {
++            const auto now = NowMs();
++            const auto previous = last_speaking_audio_ms_.exchange(now);
++            const auto gap = now - previous;
++            auto maximum = speaking_max_gap_ms_.load();
++            while (gap > maximum && !speaking_max_gap_ms_.compare_exchange_weak(maximum, gap)) {}
++            speaking_packets_.fetch_add(1);
++            if (!audio_service_.PushPacketToDecodeQueue(std::move(packet), true)) speaking_dropped_.fetch_add(1);
          }
      });
-@@ -526,6 +556,7 @@ void Application::InitializeProtocol() {
+     
+@@ -510,6 +547,7 @@ void Application::InitializeProtocol() {
+     });
+     
+     protocol_->OnAudioChannelClosed([this, &board]() {
++        speech_reception_.Stop();
+         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+         Schedule([this]() {
+             auto display = Board::GetInstance().GetDisplay();
+@@ -524,11 +562,21 @@ void Application::InitializeProtocol() {
+         if (strcmp(type->valuestring, "tts") == 0) {
+             auto state = cJSON_GetObjectItem(root, "state");
              if (strcmp(state->valuestring, "start") == 0) {
++                speaking_packets_ = 0;
++                speaking_dropped_ = 0;
++                speaking_max_gap_ms_ = 0;
++                last_speaking_audio_ms_.store(NowMs());
++                speech_reception_.Start([this] { audio_service_.ResetDecoder(); });
                  Schedule([this]() {
                      aborted_ = false;
-+                    last_speaking_audio_ms_.store(NowMs(), std::memory_order_relaxed);
                      SetDeviceState(kDeviceStateSpeaking);
                  });
              } else if (strcmp(state->valuestring, "stop") == 0) {
-@@ -609,36 +640,6 @@ void Application::InitializeProtocol() {
++                speech_reception_.Stop();
++                ESP_LOGI(TAG, "Speech delivery: packets=%lu dropped=%lu max_gap_ms=%lu",
++                    static_cast<unsigned long>(speaking_packets_.load()),
++                    static_cast<unsigned long>(speaking_dropped_.load()),
++                    static_cast<unsigned long>(speaking_max_gap_ms_.load()));
+                 Schedule([this]() {
+                     if (GetDeviceState() == kDeviceStateSpeaking) {
+                         if (listening_mode_ == kListeningModeManualStop) {
+@@ -609,36 +657,6 @@ void Application::InitializeProtocol() {
      protocol_->Start();
  }
  
@@ -146,7 +184,7 @@ index d69d43d..0312091 100644
  void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
      ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
      auto display = Board::GetInstance().GetDisplay();
-@@ -716,8 +717,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
+@@ -716,8 +734,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
          return;
      }
  
@@ -160,7 +198,7 @@ index d69d43d..0312091 100644
              return;
          }
      }
-@@ -825,8 +831,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+@@ -825,8 +848,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
          return;
      }
  
@@ -174,16 +212,38 @@ index d69d43d..0312091 100644
              audio_service_.EnableWakeWordDetection(true);
              return;
          }
-@@ -1116,4 +1127,3 @@ void Application::ResetProtocol() {
+@@ -914,7 +942,7 @@ void Application::HandleStateChangedEvent() {
+                 // Only AFE wake word can be detected in speaking mode
+                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+             }
+-            audio_service_.ResetDecoder();
++            // Decoder reset occurs on protocol START, before any binary audio.
+             break;
+         case kDeviceStateWifiConfiguring:
+             audio_service_.EnableVoiceProcessing(false);
+@@ -935,6 +963,7 @@ void Application::Schedule(std::function<void()>&& callback) {
+ }
+ 
+ void Application::AbortSpeaking(AbortReason reason) {
++    speech_reception_.Stop();
+     ESP_LOGI(TAG, "Abort speaking");
+     aborted_ = true;
+     if (protocol_) {
+@@ -1116,4 +1145,3 @@ void Application::ResetProtocol() {
          protocol_.reset();
      });
  }
 -
 diff --git a/main/application.h b/main/application.h
-index 7ca7af4..a82fcdb 100644
+index 7ca7af4..9dda043 100644
 --- a/main/application.h
 +++ b/main/application.h
-@@ -7,6 +7,7 @@
+@@ -1,3 +1,4 @@
++#include "hal/utils/audio/speech_reception.h"
+ #ifndef _APPLICATION_H_
+ #define _APPLICATION_H_
+ 
+@@ -7,6 +8,7 @@
  #include <esp_timer.h>
  
  #include <string>
@@ -191,17 +251,21 @@ index 7ca7af4..a82fcdb 100644
  #include <mutex>
  #include <deque>
  #include <memory>
-@@ -138,6 +139,9 @@ private:
+@@ -138,6 +140,13 @@ private:
  
      bool has_server_time_ = false;
      bool aborted_ = false;
 +    // Speaking watchdog: wall-clock (ms) of the last TTS audio packet received while speaking.
 +    // Written from the protocol task, read from the main loop on each clock tick.
 +    std::atomic<uint32_t> last_speaking_audio_ms_{0};
++    SpeechReception speech_reception_;
++    std::atomic<uint32_t> speaking_packets_{0};
++    std::atomic<uint32_t> speaking_dropped_{0};
++    std::atomic<uint32_t> speaking_max_gap_ms_{0};
      bool assets_version_checked_ = false;
      bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
      int clock_ticks_ = 0;
-@@ -163,7 +167,6 @@ private:
+@@ -163,7 +172,6 @@ private:
      void CheckAssetsVersion();
      void CheckNewVersion();
      void InitializeProtocol();
@@ -434,6 +498,19 @@ index 7bc917b..874b137 100644
  };
  
  #endif // I2C_DEVICE_H
+diff --git a/main/boards/common/wifi_board.cc b/main/boards/common/wifi_board.cc
+index 377685b..abbcde1 100644
+--- a/main/boards/common/wifi_board.cc
++++ b/main/boards/common/wifi_board.cc
+@@ -339,6 +339,8 @@ std::string WifiBoard::GetDeviceStatusJson() {
+     int rssi = wifi.GetRssi();
+     const char* signal = rssi >= -60 ? "strong" : (rssi >= -70 ? "medium" : "weak");
+     cJSON_AddStringToObject(network, "signal", signal);
++    cJSON_AddNumberToObject(network, "rssi_dbm", rssi);
++    cJSON_AddNumberToObject(network, "channel", wifi.GetChannel());
+     cJSON_AddItemToObject(root, "network", network);
+ 
+     // Chip temperature
 diff --git a/main/boards/common/wifi_board.h b/main/boards/common/wifi_board.h
 index 7ee973c..8de99db 100644
 --- a/main/boards/common/wifi_board.h

@@ -5,6 +5,7 @@
 #include <functional>
 #include <mutex>
 #include "wifi_failure.h"
+#include "network_credentials.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
@@ -21,7 +22,8 @@ public:
     StackChanWifiStation();
     ~StackChanWifiStation();
 
-    void AddAuth(const std::string& ssid, const std::string& password, const WifiBandInfo& band = {});
+    void AddAuth(const std::string& ssid, const std::string& password, const WifiBandInfo& band = {},
+                 const stackchan::wifi::EnterpriseCredentials& enterprise = {});
     bool Start();
     void Stop();
     void Poll();
@@ -44,6 +46,7 @@ private:
     esp_netif_t* station_netif_                   = nullptr;
     std::string ssid_;
     WifiBandInfo band_;
+    stackchan::wifi::EnterpriseCredentials enterprise_;
     std::string ip_address_;
     std::string password_;
     mutable std::mutex mutex_;
