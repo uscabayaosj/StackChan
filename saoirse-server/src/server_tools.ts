@@ -94,7 +94,7 @@ function weatherTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
 
 export const SEARCH_SYSTEM_PROMPT =
   'Answer the query with current, specific facts in two to four plain sentences, as briefly as the question allows. ' +
-  'Include dates and numbers when they matter. Use original sources where possible. If you cannot find it, say so.';
+  'Include dates and numbers when they matter. Use original sources where possible. End with the name of the publisher for facts you verified, particularly when asked for a source. If you cannot find it, say so.';
 
 /** Removes citation markers like [1] or [2][3] and stray markdown emphasis. */
 export function cleanSearchAnswer(text: string): string {
@@ -132,7 +132,10 @@ function webSearchTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
       if (typeof text !== 'string' || !text.trim()) return 'The search returned nothing.';
       const sources = new Map<string, string>();
       for (const entry of [...(Array.isArray(json.search_results) ? json.search_results : []),
-                           ...(Array.isArray(json.citations) ? json.citations : [])]) {
+                           ...(Array.isArray(json.citations) ? json.citations : []),
+                           ...(Array.isArray(json.choices?.[0]?.message?.annotations)
+                             ? json.choices[0].message.annotations.map((annotation: any) => annotation.url_citation)
+                             : [])]) {
         const url = typeof entry === 'string' ? entry : entry?.url;
         if (typeof url !== 'string' || sources.size >= 5) continue;
         try {
