@@ -120,6 +120,12 @@ export class Session {
   private listenGuardUntil = -Infinity;
   /** Loudest frame of the utterance being captured, for the log. */
   private utterPeakRms = 0;
+  private inputFrames = 0;
+  private guardedFrames = 0;
+  private rejectedSpeech = 0;
+  private decodeErrors = 0;
+  private inputPeak = 0;
+  private lastInputReport = 0;
   /**
    * The robot plays its popup chime into the open microphone when it starts listening after a wake
    * word: the first `listen start` after hello, the one after a barge-in, and a `listen start` that
@@ -186,6 +192,10 @@ export class Session {
   tick(): void {
     if (this.closed || !this.socket.isOpen) return;
     const now = this.deps.now();
+    if (this.state === 'listening' && now - this.lastInputReport >= 5000) {
+      this.deps.log(`mic window: frames=${this.inputFrames} guarded=${this.guardedFrames} decodeErrors=${this.decodeErrors} peak=${this.inputPeak.toFixed(4)} short=${this.rejectedSpeech} threshold=${this.deps.config.vad.rmsThreshold}`);
+      this.resetInputReport(now);
+    }
     const { idleCloseMs, hardCloseMs } = this.deps.config;
     const busy = this.state === 'processing' || this.state === 'speaking';
     let reason: string | null = null;
@@ -243,11 +253,15 @@ export class Session {
   handleBinary(frame: Buffer): void {
     if (this.disposed || this.state !== 'listening') return;
     const now = this.deps.now();
-    if (now - this.ttsEndedAt < this.deps.config.echoGuardMs) return;
-    if (now < this.listenGuardUntil) return;
+    this.inputFrames++;
+    if (now - this.ttsEndedAt < this.deps.config.echoGuardMs || now < this.listenGuardUntil) {
+      this.guardedFrames++;
+      return;
+    }
     let pcm: Buffer;
-    try { pcm = this.deps.codec.decode(frame); } catch { return; }
+    try { pcm = this.deps.codec.decode(frame); } catch { this.decodeErrors++; return; }
     const level = rms(pcm);
+    this.inputPeak = Math.max(this.inputPeak, level);
     if (level > this.utterPeakRms) this.utterPeakRms = level;
     const ev = this.vad.push(level);
     const capturing = this.pcmChunks.length > 0;
@@ -264,7 +278,7 @@ export class Session {
       if (this.preRoll.length > preRollFrames) this.preRoll.shift();
     }
     if (ev === 'end') this.startProcessing();
-    else if (ev === 'too-short') this.resetCapture();
+    else if (ev === 'too-short') { this.rejectedSpeech++; this.resetCapture(); }
   }
 
   private startListening(afterWake = false, at = this.deps.now()): void {
@@ -272,9 +286,16 @@ export class Session {
     this.guardNextListen = false;
     // After a wake word the robot plays its popup chime into an open microphone; don't transcribe it.
     // `at` is when the robot said it started listening (a queued start keeps its arrival time).
+    this.resetInputReport(at);
     this.listenGuardUntil = afterWake ? at + this.deps.config.wakeGuardMs : -Infinity;
     this.deps.log(`listening (mode=${this.mode}${afterWake ? `, wake guard ${this.deps.config.wakeGuardMs} ms` : ''})`);
     this.resetCapture();
+  }
+
+  private resetInputReport(at: number): void {
+    this.lastInputReport = at;
+    this.inputFrames = this.guardedFrames = this.decodeErrors = this.rejectedSpeech = 0;
+    this.inputPeak = 0;
   }
 
   private resetCapture(): void {
