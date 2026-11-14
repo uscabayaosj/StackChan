@@ -15,7 +15,7 @@ describe('streamChatEvents with tools', () => {
     const fetchImpl = (async (_u: string, init: any) => {
       body = JSON.parse(init.body);
       return sse([
-        JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'self.camera.take_photo', arguments: '' } }] } }] }),
+        JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'self_camera_take_photo', arguments: '' } }] } }] }),
         JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"question": "what ' } }] } }] }),
         JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'is on the desk?"}' } }] } }] }),
         JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
@@ -23,7 +23,7 @@ describe('streamChatEvents with tools', () => {
       ]);
     }) as unknown as typeof fetch;
     const events = await collect(streamChatEvents(cfg, [{ role: 'user', content: 'look' }], fetchImpl, { tools }));
-    expect(body.tools).toEqual(tools);
+    expect(body.tools[0].function.name).toBe('self_camera_take_photo');
     expect(body.tool_choice).toBe('auto');
     expect(events).toEqual([{ type: 'tool_calls', calls: [{ id: 'call_1', name: 'self.camera.take_photo', arguments: '{"question": "what is on the desk?"}' }] }]);
   });
@@ -50,6 +50,19 @@ describe('streamChatEvents with tools', () => {
     expect(body.tools).toBeUndefined();
   });
 
+  it('falls back after a blank primary stream and decodes the fallback tool alias', async () => {
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.model === 'm') return sse(['{"choices":[{"delta":{"content":" "}}]}', '[DONE]']);
+      expect(body.tools[0].function.name).toBe('self_camera_take_photo');
+      return sse([JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'camera', function: {
+        name: 'self_camera_take_photo', arguments: '{}',
+      } }] } }] }), '[DONE]']);
+    }) as typeof fetch;
+    const events = await collect(streamChatEventsWithFallback(cfg, { ...cfg, model: 'fb' }, [{ role: 'user', content: 'look' }], fetchImpl, { tools }));
+    expect(events).toEqual([{ type: 'tool_calls', calls: [{ id: 'camera', name: 'self.camera.take_photo', arguments: '{}' }] }]);
+  });
+
   it('a tool-calls-only stream counts as content for the fallback policy (no fallback after it)', async () => {
     let calls = 0;
     const fetchImpl = (async () => {
@@ -70,6 +83,7 @@ describe('streamChatEvents with tools', () => {
       { role: 'tool', tool_call_id: 'c1', content: 'A cat on a desk.' },
     ], fetchImpl, { tools }));
     expect(body.messages[1].tool_calls[0].id).toBe('c1');
+    expect(body.messages[1].tool_calls[0].function.name).toBe('self_camera_take_photo');
     expect(body.messages[2]).toEqual({ role: 'tool', tool_call_id: 'c1', content: 'A cat on a desk.' });
   });
 });

@@ -65,14 +65,33 @@ export async function* streamChatEvents(
   fetchImpl: typeof fetch = fetch,
   opts?: ChatOptions,
 ): AsyncGenerator<ChatEvent> {
+  // Keep firmware names internally and use portable names at the provider boundary.
+  const aliases = new Map<string, string>();
+  const originalNames = new Map<string, string>();
+  const used = new Set(opts?.tools?.map(t => t.function.name).filter(name => /^[a-zA-Z0-9_-]{1,64}$/.test(name)));
+  for (const { function: { name } } of opts?.tools ?? []) {
+    if (used.has(name) || aliases.has(name)) continue;
+    const base = name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 55);
+    let alias = base;
+    for (let suffix = 1; used.has(alias); suffix++) alias = `${base}_${suffix}`;
+    used.add(alias);
+    aliases.set(name, alias);
+    originalNames.set(alias, name);
+  }
   const body: Record<string, unknown> = {
     model: cfg.model,
-    messages,
+    messages: messages.map(message => message.role === 'assistant' && message.tool_calls
+      ? { ...message, tool_calls: message.tool_calls.map(call => ({
+        ...call, function: { ...call.function, name: aliases.get(call.function.name) ?? call.function.name },
+      })) }
+      : message),
     stream: true,
     max_tokens: cfg.maxTokens,
   };
   if (opts?.tools && opts.tools.length > 0) {
-    body.tools = opts.tools;
+    body.tools = opts.tools.map(tool => ({
+      ...tool, function: { ...tool.function, name: aliases.get(tool.function.name) ?? tool.function.name },
+    }));
     body.tool_choice = 'auto';
   }
   if (cfg.reasoningEffort && cfg.reasoningEffort !== 'none') {
@@ -102,12 +121,12 @@ export async function* streamChatEvents(
   // Emits what a delta carried; tool-call fragments only accumulate (they are emitted once, at the end).
   function* consume(delta: Delta | undefined): Generator<ChatEvent> {
     if (!delta) return;
-    if (delta.toolCalls) { sawContent = true; assembler.add(delta.toolCalls); }
-    if (delta.text) { sawContent = true; yield { type: 'text', text: delta.text }; }
+    if (delta.toolCalls) assembler.add(delta.toolCalls);
+    if (delta.text && (sawContent || delta.text.trim())) { sawContent = true; yield { type: 'text', text: delta.text }; }
   }
   function* finish(): Generator<ChatEvent> {
-    if (!sawContent) throw new LlmHttpError(502, NO_CONTENT);
-    const calls = assembler.finish();
+    const calls = assembler.finish().map(call => ({ ...call, name: originalNames.get(call.name) ?? call.name }));
+    if (!sawContent && calls.length === 0) throw new LlmHttpError(502, NO_CONTENT);
     if (calls.length > 0) yield { type: 'tool_calls', calls };
   }
   try {

@@ -481,6 +481,20 @@ describe('Session', () => {
     expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
   });
 
+  it('speaks a recovery message when the model fails before speech', async () => {
+    const env = makeEnv();
+    env.deps.chat = async function* () { throw new Error('Both models failed'); };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent).toContainEqual(expect.objectContaining({
+      type: 'tts', state: 'sentence_start', text: "I couldn't finish that reply. Could you ask me again?",
+    }));
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
   it('a timeout after tts start is logged as a process error and still sends tts stop', async () => {
     const env = makeEnv();
     env.deps.chat = async function* () { yield '[happy] Hi. '; throw new Error('LLM timed out after 15000 ms'); };

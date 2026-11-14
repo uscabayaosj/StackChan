@@ -431,7 +431,16 @@ export class Session {
       if (!this.abortRequested) {
         if (calls) { await flushText(); await speak(LOOP_FILLER); full += ` ${LOOP_FILLER}`; }
         else await flushText();
+        if (!ttsStarted) throw new Error('Reply contained no speakable text');
         completed = !this.abortRequested;
+      }
+    } catch (err) {
+      if (!ttsStarted && !this.abortRequested && this.socket.isOpen) {
+        this.deps.log(`reply failed before speech: ${(err as Error).message}`);
+        this.socket.sendText({ session_id: this.sessionId, type: 'llm', emotion: 'neutral', text: '' });
+        await speak("I couldn't finish that reply. Could you ask me again?");
+      } else {
+        throw err;
       }
     } finally {
       if (ttsStarted && this.socket.isOpen) {
