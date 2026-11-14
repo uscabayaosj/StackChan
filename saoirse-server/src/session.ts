@@ -1,3 +1,4 @@
+import { parseBusRequest } from './transport_request.js';
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import { FRAME_MS, OUTPUT_SAMPLE_RATE, OUT_FRAME_BYTES, rms, type OpusCodec } from './opus.js';
@@ -120,6 +121,7 @@ export class Session {
   private listenGuardUntil = -Infinity;
   /** Loudest frame of the utterance being captured, for the log. */
   private utterPeakRms = 0;
+  private lastTransport?: Record<string, unknown>;
   private inputFrames = 0;
   private guardedFrames = 0;
   private rejectedSpeech = 0;
@@ -409,6 +411,23 @@ export class Session {
     try {
       const working: ChatMessage[] = [...messages];
       let calls: ToolCall[] | null = null;
+      const transport = parseBusRequest(text, this.lastTransport);
+      if (transport && this.deps.serverTools?.some(t => t.spec.function.name === 'get_london_departures')) {
+        const call = { id: 'bus', name: 'get_london_departures', arguments: JSON.stringify(transport) };
+        const [result] = await this.runTools([call], signal, { writesAllowed: false, cameraAvailable: false });
+        if (this.abortRequested) return;
+        if (result.summary) {
+          full = result.summary;
+          sendEmotion();
+          await speak(full);
+          completed = !this.abortRequested;
+          return;
+        }
+        working.push({ role: 'assistant', content: null, tool_calls: [{
+          id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments },
+        }] }, { role: 'tool', tool_call_id: call.id, content: result.text });
+      }
+      if (!transport) this.lastTransport = undefined;
       const briefing = /^(?:please )?(?:brief me\b|what(?:'s| is) my day like\b)/i.test(text.trim());
       if (briefing) {
         const checks: ToolCall[] = [
@@ -431,6 +450,7 @@ export class Session {
       for (let round = 1; round <= MAX_TOOL_ROUNDS && !this.abortRequested; round++) {
         calls = null;
         const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()]
+          .filter(tool => !transport || tool.function.name !== 'get_london_departures')
           .filter(tool => (!DEVICE_WRITES.has(tool.function.name) || writesAllowed && permitted.has(tool.function.name)));
         let roundText = '';
         // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
@@ -563,7 +583,10 @@ export class Session {
       try {
         if (serverTool) {
           text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s, (card, spokenSummary) => {
-            if (!s.aborted) summary = spokenSummary;
+            if (!s.aborted) {
+              summary = spokenSummary;
+              if (call.name === 'get_london_departures') this.lastTransport = args;
+            }
             if (!s.aborted && this.socket.isOpen) this.socket.sendText({ type: 'info_card', session_id: this.sessionId, card });
           }));
         } else if (!this.mcp.has(call.name) || (isCamera && !policy.cameraAvailable)) {

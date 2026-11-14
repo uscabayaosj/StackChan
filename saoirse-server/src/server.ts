@@ -42,6 +42,7 @@ const sharedLog = (m: string): void => console.log(`[session] ${m}`);
  * STT per request, the LLM for the whole stream, TTS per sentence.
  */
 export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchImpl: typeof fetch = fetch): SessionDeps {
+  console.log("[model config]", cfg.llm.model, cfg.llm.providerOrder?.join(",") || "auto", cfg.fallbackLlm?.model || "none");
   return {
     config: cfg,
     codec,
