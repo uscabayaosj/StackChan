@@ -34,6 +34,8 @@ export interface SessionDeps {
   serverTools?: ServerTool[];
 }
 
+type ToolResult = { id: string; text: string; summary?: string };
+
 type State = 'idle' | 'listening' | 'processing' | 'speaking';
 
 /**
@@ -329,6 +331,9 @@ export class Session {
     let completed = false;
     let full = '';
     const spoken: string[] = [];
+    const replyStartedAt = this.deps.now();
+    let firstAudioAt: number | undefined;
+    let audioFrames = 0;
     /** Playback cursor: when (deps.now() time base) the device finishes the audio sent so far. */
     let playEnd = -Infinity;
 
@@ -353,6 +358,8 @@ export class Session {
           if (this.abortRequested || !this.socket.isOpen) return;
         }
         playEnd = Math.max(playEnd, this.deps.now()) + FRAME_MS;
+        firstAudioAt ??= this.deps.now();
+        audioFrames++;
         this.socket.sendBinary(frame);
       }
     };
@@ -449,7 +456,7 @@ export class Session {
           keepAlive = this.timers.setTimeout(tick, TOOL_KEEPALIVE_MS);
         };
         keepAlive = this.timers.setTimeout(tick, TOOL_KEEPALIVE_MS);
-        let results: { id: string; text: string }[];
+        let results: ToolResult[];
         try {
           results = await this.runTools(calls, signal, {
             writesAllowed, cameraAvailable: cameraAvailable || this.mcp.has(CAMERA_TOOL),
@@ -458,6 +465,15 @@ export class Session {
           if (calls.some(call => UNTRUSTED_READS.has(call.name))) writesAllowed = false;
         } finally {
           this.timers.clearTimeout(keepAlive);
+        }
+        const summary = results.length === 1 ? results[0].summary : undefined;
+        // A simple bus board already has a factual, concise announcement.
+        if (summary && !this.abortRequested && !spoken.length) {
+          full = summary;
+          if (!emotionSent) sendEmotion();
+          await speak(summary);
+          calls = null;
+          break;
         }
         working.push({
           role: 'assistant', content: stripTag(roundText).trim() || null,
@@ -488,6 +504,7 @@ export class Session {
           await this.deps.sleep(Math.min(FRAME_MS, remaining));
         }
         if (this.socket.isOpen) {
+          this.deps.log(`reply timing: first audio ${firstAudioAt === undefined ? 'none' : firstAudioAt - replyStartedAt + ' ms'}, voiced ${audioFrames * FRAME_MS} ms, stop ${this.deps.now() - replyStartedAt} ms`);
           this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'stop' });
           // Echo guard only after a reply that played out; after an abort the device already
           // stopped playing, and the utterance that interrupted it must not be dropped.
@@ -503,8 +520,8 @@ export class Session {
   }
 
   /** Runs the model's tool calls on the robot, in order; every failure becomes an `Error: …` tool result. */
-  private async runTools(calls: ToolCall[], signal: AbortSignal, policy: { writesAllowed: boolean; cameraAvailable: boolean; permitted?: Set<string> }): Promise<{ id: string; text: string }[]> {
-    const out: { id: string; text: string }[] = [];
+  private async runTools(calls: ToolCall[], signal: AbortSignal, policy: { writesAllowed: boolean; cameraAvailable: boolean; permitted?: Set<string> }): Promise<ToolResult[]> {
+    const out: ToolResult[] = [];
     let writesAllowed = policy.writesAllowed;
     let movementFailed = false;
     for (const call of calls) {
@@ -521,9 +538,11 @@ export class Session {
       const serverTool = this.deps.serverTools?.find(t => t.spec.function.name === call.name);
       const timeoutMs = serverTool ? serverTool.timeoutMs : isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
       let text: string;
+      let summary: string | undefined;
       try {
         if (serverTool) {
-          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s, card => {
+          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s, (card, spokenSummary) => {
+            if (!s.aborted) summary = spokenSummary;
             if (!s.aborted && this.socket.isOpen) this.socket.sendText({ type: 'info_card', session_id: this.sessionId, card });
           }));
         } else if (!this.mcp.has(call.name) || (isCamera && !policy.cameraAvailable)) {
@@ -552,7 +571,7 @@ export class Session {
       this.deps.log(!this.deps.config.logConversation
         ? `tool ${call.name}: ${text.startsWith('Error:') ? 'failed' : 'returned'}`
         : `tool ${call.name} ${call.arguments.slice(0, 80)} -> ${text.replace(/\s+/g, ' ').slice(0, 100)}`);
-      out.push({ id: call.id, text });
+      out.push({ id: call.id, text, summary });
     }
     return out;
   }

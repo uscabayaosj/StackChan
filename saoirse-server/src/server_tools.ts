@@ -7,7 +7,7 @@ import { createUtilityTools } from './utility_tools.js';
 export interface ServerTool {
   spec: ToolSpec;
   timeoutMs: number;
-  run(args: Record<string, unknown>, signal: AbortSignal, display?: (card: LiveCard) => void): Promise<string>;
+  run(args: Record<string, unknown>, signal: AbortSignal, display?: (card: LiveCard, summary?: string) => void): Promise<string>;
 }
 
 /** WMO weather interpretation codes (Open-Meteo `weather_code`). */

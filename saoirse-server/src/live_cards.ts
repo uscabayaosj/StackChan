@@ -31,8 +31,8 @@ export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: str
       let stop = field('stop');
       const mode = field('mode');
       if (!stop || !['tube', 'bus', 'rail'].includes(mode)) return 'Error: specify the transport mode and stop.';
-      const show = (card: LiveCard) => {
-        display?.(card);
+      const show = (card: LiveCard, summary?: string) => {
+        display?.(card, summary);
         return JSON.stringify(card);
       };
       const route = field('route').toLowerCase();
@@ -93,17 +93,26 @@ export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: str
         return arrivals;
       }));
       const now = Date.now();
-      const rows = feeds.flat().filter(x => x.modeName === mode && Number.isFinite(Date.parse(x.expectedArrival)) &&
+      const upcoming = feeds.flat().filter(x => x.modeName === mode && Number.isFinite(Date.parse(x.expectedArrival)) &&
         Date.parse(x.expectedArrival) >= now - 15_000 &&
         (!route || [x.lineId, x.lineName].some(v => typeof v === 'string' && v.toLowerCase() === route)) &&
         (!direction || [x.destinationName, x.towards, x.platformName].some(v => typeof v === 'string' && v.toLowerCase().includes(direction))))
         .sort((a, b) => Date.parse(a.expectedArrival) - Date.parse(b.expectedArrival))
-        .slice(0, 4).map(x => {
-          const minutes = Math.max(0, Math.ceil((Date.parse(x.expectedArrival) - now) / 60_000));
-          return `${minutes ? `${minutes} min` : 'Due'}  ${x.lineName} → ${x.destinationName || x.towards || 'Destination TBC'}${x.platformName ? `\n${x.platformName}` : ''}`;
-        });
+        .slice(0, 4).map(x => ({
+          minutes: Math.max(0, Math.ceil((Date.parse(x.expectedArrival) - now) / 60_000)),
+          line: String(x.lineName || 'Bus'),
+          destination: String(x.destinationName || x.towards || 'Destination TBC'),
+          platform: x.platformName,
+        }));
+      const first = upcoming[0];
+      const rows = upcoming.map(x =>
+        `${x.minutes ? `${x.minutes} min` : 'Due'}  ${x.line} → ${x.destination}${x.platform ? `\n${x.platform}` : ''}`);
+      const summary = mode === 'bus'
+        ? first ? `The ${first.line} to ${first.destination} is ${first.minutes ? `due in ${first.minutes} minute${first.minutes === 1 ? '' : 's'}` : 'due now'}.`
+          : 'TfL shows no matching live arrivals.'
+        : undefined;
       return show({ title: feeds.flat().find(x => x.stationName)?.stationName || candidates[0].name,
-        source: 'TfL • live predictions', rows: rows.length ? rows : ['No matching live predictions reported'] });
+        source: 'TfL • live predictions', rows: rows.length ? rows : ['No matching live predictions reported'] }, summary);
     },
   };
 }

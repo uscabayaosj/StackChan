@@ -750,6 +750,34 @@ describe('Session server tools', () => {
     expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Eight degrees and clear.']);
   });
 
+  it('displays the bus board and speaks one arrival without another model round', async () => {
+    const env = makeEnv();
+    const card = { title: 'Clapham Common', source: 'TfL', rows: ['1 min 50', '3 min 88'] };
+    const summary = 'The 50 to Stockwell is due in 1 minute.';
+    env.deps.serverTools = [{
+      timeoutMs: 1000,
+      spec: { type: 'function', function: { name: 'get_london_departures', description: 'Bus board', parameters: {} } },
+      run: async (_args, _signal, display) => {
+        display?.(card, summary);
+        return JSON.stringify(card);
+      },
+    }];
+    let rounds = 0;
+    env.deps.chat = async function* () {
+      rounds++;
+      yield { type: 'tool_calls', calls: [{ id: 'bus', name: 'get_london_departures', arguments: '{}' }] };
+    };
+    const s = new Session(env.socket, env.deps, 'aa:bb');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(rounds).toBe(1);
+    expect(env.sent).toContainEqual(expect.objectContaining({ type: 'info_card', card }));
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual([summary]);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
   it('a failing or slow server tool becomes an Error tool result', async () => {
     const env = makeEnv();
     env.deps.serverTools = [
