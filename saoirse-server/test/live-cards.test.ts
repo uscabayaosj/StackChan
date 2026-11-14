@@ -20,6 +20,27 @@ describe('live transport cards', () => {
     expect(cards[0].rows).toEqual(['2 min  Victoria → Brixton', '5 min  Victoria → Brixton']);
   });
 
+  it.each([
+    { stop: 'Clapham Common Station', letter: 'Stop D', direction: 'towards Stockwell' },
+    { stop: 'Clapham Common Station, stop D towards Stockwell' },
+  ])('accepts spoken bus stop and direction phrases ($stop)', async args => {
+    const fetchImpl = (async (url: string) => {
+      if (url.includes('/Search/')) {
+        expect(decodeURIComponent(url)).toContain('/Search/Clapham Common Station?');
+        return response({ matches: ['D', 'AD'].map(letter => ({
+          id: '490000050' + letter, name: 'Clapham Common Station',
+        })) });
+      }
+      expect(url).toContain('/490000050D/Arrivals');
+      return response(['Stockwell', 'Brixton'].map(destinationName => ({
+        modeName: 'bus', lineName: '50', destinationName, expectedArrival: new Date(Date.now() + 60_000).toISOString(),
+      })));
+    }) as typeof fetch;
+    const cards: LiveCard[] = [];
+    await transportTool(fetchImpl).run({ mode: 'bus', ...args }, signal, card => cards.push(card));
+    expect(cards[0].rows).toEqual(['1 min  50 → Stockwell']);
+  });
+
   it('marks a cancelled National Rail departure and sends auth only to Darwin', async () => {
     const fetchImpl = (async (url: string, options: RequestInit) => {
       expect(url).toMatch(/^https:\/\/realtime\.nationalrail\.co\.uk\/.*\/VIC\?/);

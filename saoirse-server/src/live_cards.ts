@@ -28,7 +28,7 @@ export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: str
     } },
     async run(args, signal, display) {
       const field = (key: string) => typeof args[key] === 'string' ? args[key].trim().slice(0, 120) : '';
-      const stop = field('stop');
+      let stop = field('stop');
       const mode = field('mode');
       if (!stop || !['tube', 'bus', 'rail'].includes(mode)) return 'Error: specify the transport mode and stop.';
       const show = (card: LiveCard) => {
@@ -36,8 +36,23 @@ export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: str
         return JSON.stringify(card);
       };
       const route = field('route').toLowerCase();
-      const direction = field('direction').toLowerCase();
-      const letter = field('letter').toLowerCase();
+      let direction = field('direction').toLowerCase();
+      let letter = field('letter').toLowerCase();
+      if (mode === 'bus') {
+        const toward = /[, ]+towards?\s+(.+)$/i.exec(stop);
+        if (toward) {
+          direction ||= toward[1].toLowerCase();
+          stop = stop.slice(0, toward.index).trim();
+        }
+        const suffix = /[, ]+stop\s+([a-z]{1,2})[.!?]?$/i.exec(stop);
+        if (suffix) {
+          letter ||= suffix[1].toLowerCase();
+          stop = stop.slice(0, suffix.index).trim();
+        }
+        direction = direction.replace(/^towards?\s+/, '').replace(/[.!?]+$/, '').trim();
+        letter = letter.replace(/^stop\s+/, '').replace(/[.!?]+$/, '').trim();
+        if (!stop) return 'Error: specify the bus stop name or code.';
+      }
       if (mode === 'rail') {
         if (!darwinAuthorization) return 'Error: the National Rail feed is not configured.';
         if (!/^[a-z]{3}$/i.test(stop)) return 'Error: the National Rail lookup needs a three-letter CRS code.';
@@ -61,7 +76,7 @@ export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: str
             .map((item: any) => ({ id: item.naptanId || item.id, name: item.commonName || stop }));
         })() : (await json(`${root}/Search/${encodeURIComponent(stop)}?modes=${mode}`, signal)).matches ?? [];
       const exact = matches.filter(m => key(m.name) === key(stop));
-      const candidates = (exact.length ? exact : matches).filter(m => !letter || m.id.toLowerCase().endsWith(letter));
+      const candidates = (exact.length ? exact : matches).filter(m => !letter || (m.stopLetter?.toLowerCase() ?? /[a-z]+$/i.exec(m.id)?.[0]?.toLowerCase()) === letter);
       if (busCode && candidates.length === 0) return 'Error: TfL did not resolve that bus code. Ask for the stop name and letter.';
       if (!candidates.length) return 'Error: TfL could not find that stop. Ask for the exact name or stop code.';
       if (new Set(candidates.map(x => key(x.name))).size > 1 || candidates.length > 12)
