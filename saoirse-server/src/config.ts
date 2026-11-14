@@ -1,6 +1,7 @@
 import { assertTimeZone } from './clock.js';
 
 export interface LlmConfig {
+  protocol?: 'anthropic';
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -95,6 +96,7 @@ function timeZone(env: NodeJS.ProcessEnv, key: string, dflt: string): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const anthropicKey = env.SAOIRSE_ANTHROPIC_API_KEY;
   const fallbackKey = env.LLM_FALLBACK_API_KEY;
   const deviceToken = env.SAOIRSE_DEVICE_TOKEN || '';
   const otaSecret = env.OTA_SECRET || '';
@@ -106,7 +108,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     darwinAuthorization: env.DARWIN_AUTHORIZATION,
     logConversation: env.LOG_CONVERSATION === 'true',
     speechGain: Math.min(2, Math.max(1, num(env, 'SPEECH_GAIN', 1.25))),
-    llm: {
+    llm: anthropicKey ? {
+      protocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: anthropicKey,
+      model: 'claude-haiku-5-5',
+      maxTokens: num(env, 'LLM_MAX_TOKENS', 400),
+    } : {
       baseUrl: env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
       apiKey: req(env, 'LLM_API_KEY'),
       model: env.LLM_MODEL || 'openai/gpt-oss-20b',

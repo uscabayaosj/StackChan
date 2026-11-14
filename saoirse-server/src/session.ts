@@ -408,6 +408,7 @@ export class Session {
       if (tail) await speak(tail);
     };
 
+    let replyRoute = 'model';
     try {
       const working: ChatMessage[] = [...messages];
       let calls: ToolCall[] | null = null;
@@ -417,6 +418,7 @@ export class Session {
         const [result] = await this.runTools([call], signal, { writesAllowed: false, cameraAvailable: false });
         if (this.abortRequested) return;
         if (result.summary) {
+          replyRoute = 'direct TfL';
           full = result.summary;
           sendEmotion();
           await speak(full);
@@ -545,7 +547,7 @@ export class Session {
           await this.deps.sleep(Math.min(FRAME_MS, remaining));
         }
         if (this.socket.isOpen) {
-          this.deps.log(`reply timing: first audio ${firstAudioAt === undefined ? 'none' : firstAudioAt - replyStartedAt + ' ms'}, voiced ${audioFrames * FRAME_MS} ms, stop ${this.deps.now() - replyStartedAt} ms`);
+          this.deps.log(`reply timing: route ${replyRoute}, first audio ${firstAudioAt === undefined ? 'none' : firstAudioAt - replyStartedAt + ' ms'}, voiced ${audioFrames * FRAME_MS} ms, stop ${this.deps.now() - replyStartedAt} ms`);
           this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'stop' });
           // Echo guard only after a reply that played out; after an abort the device already
           // stopped playing, and the utterance that interrupted it must not be dropped.

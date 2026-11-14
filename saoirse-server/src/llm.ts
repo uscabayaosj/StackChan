@@ -24,7 +24,7 @@ export class LlmHttpError extends Error {
 const NO_CONTENT = 'LLM stream produced no content';
 
 interface ToolCallFragment { index: number; id?: string; function?: { name?: string; arguments?: string } }
-interface Delta { text?: string; toolCalls?: ToolCallFragment[] }
+interface Delta { text?: string; toolCalls?: ToolCallFragment[]; done?: boolean }
 
 function parseDelta(payload: string): Delta | undefined {
   try {
@@ -38,6 +38,67 @@ function parseDelta(payload: string): Delta | undefined {
   } catch {
     return undefined; // keep-alive or partial line
   }
+}
+
+// Translate Anthropic SSE into the same text and tool fragments used by the voice session.
+function parseAnthropicDelta(payload: string): Delta | undefined {
+  const event = JSON.parse(payload);
+  if (event.type === 'message_stop') return { done: true };
+  if (event.type === 'error') throw new LlmHttpError(502, 'Anthropic interrupted the stream');
+  if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+    const { id, name, input } = event.content_block;
+    return { toolCalls: [{ index: event.index, id, function: {
+      name, arguments: Object.keys(input ?? {}).length ? JSON.stringify(input) : '',
+    } }] };
+  }
+  if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
+    return { toolCalls: [{ index: event.index, function: { arguments: event.delta.partial_json } }] };
+  }
+  if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+    return { text: event.delta.text };
+  }
+}
+
+function anthropicBody(body: Record<string, unknown>, messages: ChatMessage[], tools: ToolSpec[] = []) {
+  const system = messages.filter(msg => msg.role === 'system').map(msg => msg.content).join('\n\n');
+  const turns: { role: 'user' | 'assistant'; content: Record<string, unknown>[] }[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'system') continue;
+    const role = msg.role === 'assistant' ? 'assistant' : 'user';
+    const content: Record<string, unknown>[] = [];
+    if (msg.role === 'tool') {
+      content.push({ type: 'tool_result', tool_use_id: msg.tool_call_id, content: msg.content });
+    } else {
+      if (msg.content) content.push({ type: 'text', text: msg.content });
+      if (msg.role === 'assistant') {
+        for (const call of msg.tool_calls ?? []) {
+          let input: Record<string, unknown> = {};
+          try {
+            const parsed: unknown = JSON.parse(call.function.arguments);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+          } catch { /* the tool result explains invalid arguments */ }
+          content.push({ type: 'tool_use', id: call.id, name: call.function.name, input });
+        }
+      }
+    }
+    if (content.length === 0) continue;
+    const last = turns.at(-1);
+    if (last?.role === role) last.content.push(...content);
+    else turns.push({ role, content });
+  }
+  return {
+    model: body.model,
+    stream: true,
+    max_tokens: body.max_tokens,
+    thinking: { type: 'disabled' },
+    system,
+    messages: turns,
+    ...(tools.length > 0 ? {
+      tools: tools.map(({ function: tool }) => ({
+        name: tool.name, description: tool.description, input_schema: tool.parameters,
+      })),
+    } : {}),
+  };
 }
 
 /** Accumulates streamed tool-call fragments (by index) into complete calls. */
@@ -104,15 +165,21 @@ export async function* streamChatEvents(
   if (cfg.providerOrder && cfg.providerOrder.length > 0) {
     body.provider = { order: cfg.providerOrder, allow_fallbacks: true };
   }
-  const res = await fetchImpl(`${cfg.baseUrl}/chat/completions`, {
+  const anthropic = cfg.protocol === 'anthropic';
+  const parse = anthropic ? parseAnthropicDelta : parseDelta;
+  const res = await fetchImpl(`${cfg.baseUrl}/${anthropic ? 'messages' : 'chat/completions'}`, {
     method: 'POST',
-    headers: {
+    headers: anthropic ? {
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    } : {
       Authorization: `Bearer ${cfg.apiKey}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://github.com/uscabayaosj/StackChan',
       'X-Title': 'Saoirse StackChan',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(anthropic ? anthropicBody(body, body.messages as ChatMessage[], body.tools as ToolSpec[] | undefined) : body),
     signal: opts?.signal,
   });
   if (!res.ok || !res.body) throw new LlmHttpError(res.status, await res.text().catch(() => ''));
@@ -145,7 +212,9 @@ export async function* streamChatEvents(
         if (!line.startsWith('data:')) continue;
         const payload = line.slice(5).trim();
         if (payload === '[DONE]') { yield* finish(); return; }
-        yield* consume(parseDelta(payload));
+        const delta = parse(payload);
+        if (delta?.done) { yield* finish(); return; }
+        yield* consume(delta);
       }
     }
     // Flush: a last data line may arrive without a trailing newline.
@@ -153,8 +222,13 @@ export async function* streamChatEvents(
     const last = pending.trim();
     if (last.startsWith('data:')) {
       const payload = last.slice(5).trim();
-      if (payload !== '[DONE]') yield* consume(parseDelta(payload));
+      if (payload !== '[DONE]') {
+        const delta = parse(payload);
+        if (delta?.done) { yield* finish(); return; }
+        yield* consume(delta);
+      }
     }
+    if (anthropic) throw new LlmHttpError(502, 'Anthropic stream ended before message_stop');
     yield* finish();
   } finally {
     reader.cancel().catch(() => {});
@@ -181,8 +255,12 @@ export async function* streamChatEventsWithFallback(
   opts?: ChatOptions,
 ): AsyncGenerator<ChatEvent> {
   let yielded = false;
+  const started = Date.now();
   try {
     for await (const ev of streamChatEvents(primary, messages, fetchImpl, opts)) {
+      if (!yielded && primary.protocol === 'anthropic') {
+        console.log(`[llm] Anthropic ${primary.model} first ${ev.type} in ${Date.now() - started} ms (thinking disabled)`);
+      }
       yielded = true;
       yield ev;
     }

@@ -30,6 +30,14 @@ describe('loadConfig', () => {
     expect(c.idleCloseMs).toBe(60000);
     expect(c.fallbackLlm).toBeUndefined();
   });
+  it('uses the trial key only for chat when direct Claude is enabled', () => {
+    const c = loadConfig({ ...base, SAOIRSE_ANTHROPIC_API_KEY: 'a', LLM_FALLBACK_API_KEY: 'd' });
+    expect(c.llm).toMatchObject({ protocol: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-haiku-5-5', apiKey: 'a' });
+    expect(c.vision.apiKey).toBe('k');
+    expect(c.search.apiKey).toBe('k');
+    expect(c.fallbackLlm?.model).toBe('deepseek-flash');
+  });
+
   it('reads the fallback LLM only when its key is set', () => {
     const c = loadConfig({ ...base, LLM_FALLBACK_API_KEY: 'd' });
     expect(c.fallbackLlm?.model).toBe('deepseek-flash');
