@@ -487,6 +487,16 @@ export class Session {
         } else {
           text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
           if (isCamera) text = cameraResultText(text);
+          if (call.name === 'self.robot.get_reminders') {
+            try {
+              const reminders = JSON.parse(text);
+              if (Array.isArray(reminders)) {
+                text = JSON.stringify(reminders.map(({ id, message, repeat }) => ({ id, message, repeat })));
+              }
+            } catch {
+              text = 'Error: the robot returned an unreadable reminder list.';
+            }
+          }
         }
       } catch (err) {
         text = `Error: ${(err as Error).message}`;
