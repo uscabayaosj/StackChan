@@ -53,6 +53,18 @@ export const MAX_LEAD_FRAMES = 30;
 export const TTS_STOP_MARGIN_MS = 500;
 /** How many LLM rounds a turn may take (each tool round is one more LLM call). */
 export const MAX_TOOL_ROUNDS = 4;
+const DEVICE_WRITES = new Set(['self.robot.set_head_angles', 'self.robot.set_led_color',
+  'self.robot.create_reminder', 'self.robot.stop_reminder', 'self.audio_speaker.set_volume',
+  'self.screen.set_brightness', 'self.screen.set_theme']);
+const WRITE_REQUESTS: Record<string, RegExp> = {
+  'self.robot.set_led_color': /\b(?:lights?|leds?|light bars?)\b/i,
+  'self.robot.create_reminder': /\b(?:remind|set (?:a |the )?(?:timer|reminder))\b/i,
+  'self.robot.stop_reminder': /\b(?:cancel|stop|remove|delete)\b.*\b(?:timer|reminder)\b/i,
+  'self.audio_speaker.set_volume': /\b(?:louder|quieter|mute|unmute|turn (?:it|your voice) (?:up|down)|(?:set|increase|decrease|raise|lower).*volume)\b/i,
+  'self.screen.set_brightness': /\b(?:brightness|brighter|dim|dimmer)\b/i,
+  'self.screen.set_theme': /\b(?:theme|dark mode|light mode)\b/i,
+};
+const UNTRUSTED_READS = new Set(['self.camera.take_photo', 'web_search', 'get_london_departures', 'self.robot.get_reminders']);
 export const CAMERA_TOOL = 'self.camera.take_photo';
 /** Spoken before a photo when the model said nothing first, so the robot is not silent for the capture. */
 export const CAMERA_FILLER = 'Let me look.';
@@ -185,7 +197,7 @@ export class Session {
 
   async handleText(raw: string): Promise<void> {
     let msg: any;
-    try { msg = JSON.parse(raw); } catch { this.deps.log(`bad json: ${raw.slice(0, 80)}`); return; }
+    try { msg = JSON.parse(raw); } catch { this.deps.log("bad protocol JSON"); return; }
     switch (msg.type) {
       case 'hello':
         this.socket.sendText({
@@ -302,14 +314,14 @@ export class Session {
     if (this.abortRequested || !this.socket.isOpen) return;
     const heard = `utterance ${stats.ms} ms, peak rms ${stats.peak.toFixed(3)}`;
     if (!text) { this.deps.log(`${heard}: empty transcript`); return; }
-    this.deps.log(`${heard}: "${text}"`);
+    this.deps.log(!this.deps.config.logConversation ? heard : `${heard}: "${text}"`);
     this.socket.sendText({ session_id: this.sessionId, type: 'stt', text });
     this.history.push({ role: 'user', content: text });
     this.trimHistory();
 
     const localTime = formatLocalTime(new Date(this.deps.now()), this.deps.config.deviceTz);
     const { hour, minute } = localHourMinute(new Date(this.deps.now()), this.deps.config.deviceTz);
-    const system = `${SYSTEM_PROMPT}\n\nCurrent local time: ${localTime} (say it as: ${spokenTime(hour, minute)})`;
+    const system = `${SYSTEM_PROMPT}\nRobot tools currently available: ${this.mcp.tools.map(tool => tool.name).join(', ') || 'none confirmed yet'}.\n\nCurrent local time: ${localTime} (say it as: ${spokenTime(hour, minute)})`;
     const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.history];
     const acc = new SentenceAccumulator();
     let emotionSent = false;
@@ -369,9 +381,29 @@ export class Session {
     try {
       const working: ChatMessage[] = [...messages];
       let calls: ToolCall[] | null = null;
+      const briefing = /^(?:please )?(?:brief me\b|what(?:'s| is) my day like\b)/i.test(text.trim());
+      if (briefing) {
+        const checks: ToolCall[] = [
+          { id: 'brief_weather', name: 'get_weather', arguments: '{"days":1}' },
+          { id: 'brief_reminders', name: 'self.robot.get_reminders', arguments: '{}' },
+        ];
+        const results = await this.runTools(checks, signal, { writesAllowed: false, cameraAvailable: false });
+        working.push({ role: 'assistant', content: null, tool_calls: checks.map(call => ({
+          id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments },
+        })) });
+        for (const result of results) working.push({ role: 'tool', tool_call_id: result.id, content: result.text });
+      }
+      const cameraAvailable = this.mcp.has(CAMERA_TOOL);
+      const visionRequest = /\b(?:see|picture|photo|camera|look at|read the label)\b/i.test(text);
+      const moveRequested = /\b(?:turn|move|look)\b[^.!?]{0,45}\b(?:left|right|up|down|straight ahead)\b/i.test(text);
+      const permitted = new Set(Object.entries(WRITE_REQUESTS)
+        .filter(([, pattern]) => pattern.test(text)).map(([name]) => name));
+      if (moveRequested && (!visionRequest || cameraAvailable)) permitted.add('self.robot.set_head_angles');
+      let writesAllowed = !briefing;
       for (let round = 1; round <= MAX_TOOL_ROUNDS && !this.abortRequested; round++) {
         calls = null;
-        const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()];
+        const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()]
+          .filter(tool => (!DEVICE_WRITES.has(tool.function.name) || writesAllowed && permitted.has(tool.function.name)));
         let roundText = '';
         // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
         // the face and is never spoken. The tag can be split across chunks, so hold text until it is decided.
@@ -399,6 +431,7 @@ export class Session {
           await handleChunk(text);
         }
         if (this.abortRequested || !calls) break;
+        if (briefing) break;
         // Nothing to feed the results back into: don't run the robot for a reply that cannot follow.
         if (round === MAX_TOOL_ROUNDS) break;
         // What the model said before asking for tools is heard first; a photo gets a filler if it said nothing.
@@ -418,7 +451,11 @@ export class Session {
         keepAlive = this.timers.setTimeout(tick, TOOL_KEEPALIVE_MS);
         let results: { id: string; text: string }[];
         try {
-          results = await this.runTools(calls, signal);
+          results = await this.runTools(calls, signal, {
+            writesAllowed, cameraAvailable: cameraAvailable || this.mcp.has(CAMERA_TOOL),
+            permitted,
+          });
+          if (calls.some(call => UNTRUSTED_READS.has(call.name))) writesAllowed = false;
         } finally {
           this.timers.clearTimeout(keepAlive);
         }
@@ -466,9 +503,17 @@ export class Session {
   }
 
   /** Runs the model's tool calls on the robot, in order; every failure becomes an `Error: …` tool result. */
-  private async runTools(calls: ToolCall[], signal: AbortSignal): Promise<{ id: string; text: string }[]> {
+  private async runTools(calls: ToolCall[], signal: AbortSignal, policy: { writesAllowed: boolean; cameraAvailable: boolean; permitted?: Set<string> }): Promise<{ id: string; text: string }[]> {
     const out: { id: string; text: string }[] = [];
+    let writesAllowed = policy.writesAllowed;
+    let movementFailed = false;
     for (const call of calls) {
+      if ((DEVICE_WRITES.has(call.name) && (!writesAllowed || !policy.permitted?.has(call.name))) ||
+          (call.name === CAMERA_TOOL && movementFailed)) {
+        out.push({ id: call.id, text: 'Error: the requested device action could not be performed safely.' });
+        continue;
+      }
+      if (UNTRUSTED_READS.has(call.name)) writesAllowed = false;
       let args: Record<string, unknown> = {};
       try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {}; } catch { out.push({ id: call.id, text: 'Error: tool arguments were not valid JSON' }); continue; }
       if (!args || typeof args !== 'object' || Array.isArray(args)) { out.push({ id: call.id, text: 'Error: tool arguments must be a JSON object' }); continue; }
@@ -478,8 +523,10 @@ export class Session {
       let text: string;
       try {
         if (serverTool) {
-          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s));
-        } else if (!this.mcp.has(call.name)) {
+          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s, card => {
+            if (!s.aborted && this.socket.isOpen) this.socket.sendText({ type: 'info_card', session_id: this.sessionId, card });
+          }));
+        } else if (!this.mcp.has(call.name) || (isCamera && !policy.cameraAvailable)) {
           // Never send the robot a tool it didn't offer: it answers slowly, and only with an error.
           text = this.mcp.loading
             ? 'Error: your robot tools are still starting up. Say so briefly and ask them to try again in a moment.'
@@ -491,7 +538,7 @@ export class Session {
             try {
               const reminders = JSON.parse(text);
               if (Array.isArray(reminders)) {
-                text = JSON.stringify(reminders.map(({ id, message, repeat }) => ({ id, message, repeat })));
+                text = JSON.stringify(reminders.map(({ id, message, repeat, remaining_ms }) => ({ id, message, repeat, remaining_ms })));
               }
             } catch {
               text = 'Error: the robot returned an unreadable reminder list.';
@@ -501,7 +548,10 @@ export class Session {
       } catch (err) {
         text = `Error: ${(err as Error).message}`;
       }
-      this.deps.log(`tool ${call.name} ${call.arguments.slice(0, 80)} -> ${text.replace(/\s+/g, ' ').slice(0, 100)}`);
+      if (call.name === 'self.robot.set_head_angles') movementFailed = text.startsWith('Error:');
+      this.deps.log(!this.deps.config.logConversation
+        ? `tool ${call.name}: ${text.startsWith('Error:') ? 'failed' : 'returned'}`
+        : `tool ${call.name} ${call.arguments.slice(0, 80)} -> ${text.replace(/\s+/g, ' ').slice(0, 100)}`);
       out.push({ id: call.id, text });
     }
     return out;

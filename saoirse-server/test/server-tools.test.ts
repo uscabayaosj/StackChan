@@ -15,8 +15,8 @@ const tool = (name: string, fetchImpl: typeof fetch, c = cfg) => createServerToo
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 describe('config', () => {
-  it('defaults: all five server tools, London home, Perplexity Sonar on the LLM key', () => {
-    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units', 'seconds_until']);
+  it('defaults: all six server tools, London home, Perplexity Sonar on the LLM key', () => {
+    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units', 'seconds_until', 'get_london_departures']);
     expect(cfg.weather).toEqual({ place: 'London', latitude: 51.5072, longitude: -0.1276, hasCoordinates: true });
     expect(cfg.search).toMatchObject({ model: 'perplexity/sonar', apiKey: 'k', baseUrl: 'https://openrouter.ai/api/v1', timeoutMs: 15000 });
     const only = loadConfig({ ...base, SERVER_TOOLS: 'calculate', WEATHER_PLACE: 'Dublin', WEATHER_LATITUDE: '53.33', WEATHER_LONGITUDE: '-6.25' });
@@ -158,6 +158,11 @@ describe('review fixes', () => {
     expect(() => evaluate('max()')).toThrow();
   });
 
+  it('uses elapsed time across both London clock changes', () => {
+    expect(secondsUntil(new Date('2026-03-29T00:30:00Z'), 'Europe/London', 150)).toBe(3600);
+    expect(secondsUntil(new Date('2026-10-25T00:30:00Z'), 'Europe/London', 150)).toBe(7200);
+  });
+
   it('seconds_until: parses clock times and counts to the next occurrence in the device zone', async () => {
     expect(parseClockTime('18:00')).toBe(1080);
     expect(parseClockTime('6pm')).toBe(1080);
@@ -174,7 +179,7 @@ describe('review fixes', () => {
     expect(secondsUntil(at, 'Europe/London', 17 * 60)).toBe(86400 - 2430);
     expect(secondsUntil(new Date('2026-07-15T17:40:00Z'), 'Europe/London', 19 * 60)).toBe(1200); // BST
     const tool = createUtilityTools(1000, 'Europe/London', () => at).find(t => t.spec.function.name === 'seconds_until')!;
-    expect(await tool.run({ time: '6pm' }, sig)).toBe('18:00 is 1170 seconds from now (20 min).');
+    expect(await tool.run({ time: '6pm' }, sig)).toBe('18:00 is 1170 seconds from now (19 min).');
     expect(await tool.run({ time: 'teatime' }, sig)).toBe('Error: could not read "teatime" as a clock time');
   });
 

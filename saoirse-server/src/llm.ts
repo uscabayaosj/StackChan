@@ -68,8 +68,12 @@ export async function* streamChatEvents(
   // Keep firmware names internally and use portable names at the provider boundary.
   const aliases = new Map<string, string>();
   const originalNames = new Map<string, string>();
-  const used = new Set(opts?.tools?.map(t => t.function.name).filter(name => /^[a-zA-Z0-9_-]{1,64}$/.test(name)));
-  for (const { function: { name } } of opts?.tools ?? []) {
+  const names = [
+    ...(opts?.tools?.map(tool => tool.function.name) ?? []),
+    ...messages.flatMap(message => message.role === 'assistant' ? message.tool_calls?.map(call => call.function.name) ?? [] : []),
+  ];
+  const used = new Set(names.filter(name => /^[a-zA-Z0-9_-]{1,64}$/.test(name)));
+  for (const name of names) {
     if (used.has(name) || aliases.has(name)) continue;
     const base = name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 55);
     let alias = base;

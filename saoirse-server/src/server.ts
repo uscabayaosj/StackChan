@@ -51,7 +51,7 @@ export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchI
     chat: (messages, signal, tools) =>
       streamWithDeadline('LLM', cfg.llmTimeoutMs, signal, s => streamChatEventsWithFallback(cfg.llm, cfg.fallbackLlm, messages, fetchImpl, { signal: s, tools })),
     synthesize: (text, signal) =>
-      streamWithDeadline('TTS', cfg.ttsTimeoutMs, signal, s => synthesizeToFrames(cfg.elevenlabs, text, codec, fetchImpl, { signal: s })),
+      streamWithDeadline('TTS', cfg.ttsTimeoutMs, signal, s => synthesizeToFrames(cfg.elevenlabs, text, codec, fetchImpl, { signal: s, gain: cfg.speechGain })),
     now: () => Date.now(),
     sleep: (ms) => new Promise(r => setTimeout(r, ms)),
     log: sharedLog,

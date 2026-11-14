@@ -51,3 +51,22 @@ Then set `PUBLIC_WS_URL=wss://<your-host>/api/ws` and redeploy. To point the rob
 - Server tools (`SERVER_TOOLS`, default `get_weather,web_search,calculate,convert_units`): weather from Open-Meteo (free, no key; home `WEATHER_PLACE` London at `WEATHER_LATITUDE`/`WEATHER_LONGITUDE`, other places geocoded), web search through `SEARCH_MODEL` (default `perplexity/sonar` on the LLM key, about half a cent per search; `SEARCH_TIMEOUT_MS` 15000), and an exact calculator and unit converter so she never does arithmetic herself.
 - `DEVICE_TZ` (default `UTC`): the robot's IANA time zone, e.g. `Europe/London`. It sets the OTA `timezone_offset` (the robot's clock; Vercel itself runs in UTC) and the `Current local time:` line appended to the system prompt.
 - `@discordjs/opus` is an optional dependency (native codec, opt-in via `OPUS_CODEC=native`); `npm install --omit=optional` skips it.
+
+### Live cards and privacy
+
+Firmware 1.6.2 accepts weather and transport cards over the existing voice connection.
+Ask for the weather, the next Tube at a named station, or a bus at a named stop.
+Specify a route, direction, stop letter, or stop code to narrow the predictions.
+TfL returns live arrivals and can report an empty board. These cards cover upcoming
+services rather than complete future-date timetables.
+
+National Rail uses the official Darwin public JSON station board. Set
+`DARWIN_AUTHORIZATION` in the production environment to the complete Basic
+Authorization header issued for the feed. Use the station's three-letter CRS
+code to disambiguate. If `SERVER_TOOLS` is overridden, include
+`get_london_departures` to enable the transport tool.
+
+`LOG_CONVERSATION=true` opts into logging transcripts and tool details. By
+default the server logs timings and tool outcomes. `SPEECH_GAIN` sets the
+speech signal gain (1.25 by default, 1 disables amplification). The robot's
+speaker volume remains separately adjustable by voice or in its settings.

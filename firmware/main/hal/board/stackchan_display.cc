@@ -619,4 +619,34 @@ void StackChanAvatarDisplay::StartHappyFlash()
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)
 {
+    if (!notification || !*notification) return;
+    DisplayLockGuard lock(this);
+    static lv_obj_t* active_card = nullptr;
+    if (active_card) lv_obj_delete(active_card);
+    auto card = lv_obj_create(lv_layer_top());
+    active_card = card;
+    lv_obj_set_size(card, lv_pct(92), LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(card, lv_pct(90), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x172638), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    auto label = lv_label_create(card);
+    lv_obj_set_width(label, lv_pct(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+    lv_label_set_text(label, notification);
+    auto timer = lv_timer_create([](lv_timer_t* t) {
+        auto obj = static_cast<lv_obj_t*>(lv_timer_get_user_data(t));
+        lv_timer_set_user_data(t, nullptr);
+        lv_obj_delete(obj);
+        lv_timer_delete(t);
+    }, duration_ms > 0 ? duration_ms : 3000, card);
+    if (!timer) { active_card = nullptr; lv_obj_delete(card); return; }
+    lv_obj_add_event_cb(card, [](lv_event_t* event) {
+        active_card = nullptr;
+        auto t = static_cast<lv_timer_t*>(lv_event_get_user_data(event));
+        if (lv_timer_get_user_data(t)) lv_timer_delete(t);
+    }, LV_EVENT_DELETE, timer);
 }

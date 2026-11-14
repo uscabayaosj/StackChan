@@ -1,5 +1,5 @@
 import type { ServerTool } from './server_tools.js';
-import { localHourMinute } from './clock.js';
+
 
 /* ------------------------------- calculator ------------------------------- */
 
@@ -180,13 +180,19 @@ export function parseClockTime(text: string): number | null {
   return h * 60 + min;
 }
 
-/** Seconds from `at` until the next occurrence of `minutesOfDay` in `timeZone` (1..86400). */
+/** Seconds from `at` until the next occurrence of `minutesOfDay` in `timeZone`, measured in elapsed seconds. */
 export function secondsUntil(at: Date, timeZone: string, minutesOfDay: number): number {
-  const { hour, minute } = localHourMinute(at, timeZone);
-  const nowSec = hour * 3600 + minute * 60 + at.getUTCSeconds();
-  let diff = minutesOfDay * 60 - nowSec;
-  if (diff <= 0) diff += 86400;
-  return diff;
+  const zone = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const firstMinute = Math.floor(at.getTime() / 60_000) + 1;
+  const target = `${String(Math.floor(minutesOfDay / 60)).padStart(2, '0')}:${String(minutesOfDay % 60).padStart(2, '0')}`;
+  // Walk real minutes so repeated hours are distinct and missing hours are skipped.
+  for (let offset = 0; offset < 49 * 60; offset++) {
+    const candidate = (firstMinute + offset) * 60_000;
+    if (zone.format(candidate) === target) return Math.ceil((candidate - at.getTime()) / 1000);
+  }
+  throw new Error('No matching local time in the next 49 hours');
 }
 
 export function createUtilityTools(timeoutMs: number, timeZone = 'UTC', now: () => Date = () => new Date()): ServerTool[] {
@@ -203,9 +209,10 @@ export function createUtilityTools(timeoutMs: number, timeZone = 'UTC', now: () 
         const mins = parseClockTime(text);
         if (mins === null) return `Error: could not read "${text}" as a clock time`;
         const s = secondsUntil(now(), timeZone, mins);
-        const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+        if (s > 86400) return "Error: the next occurrence is beyond the robot’s 24-hour reminder limit.";
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
         const hh = String(Math.floor(mins / 60)).padStart(2, '0'), mm = String(mins % 60).padStart(2, '0');
-        return `${hh}:${mm} is ${s} seconds from now (${h > 0 ? `${h} h ` : ''}${m} min)${s > 24 * 3600 - 60 ? ', tomorrow' : ''}.`;
+        return `${hh}:${mm} is ${s} seconds from now (${h > 0 ? `${h} h ` : ''}${m} min).`;
       },
     },
     {

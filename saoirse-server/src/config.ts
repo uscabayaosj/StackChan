@@ -13,6 +13,9 @@ export interface LlmConfig {
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'none';
 
 export interface Config {
+  darwinAuthorization?: string;
+  logConversation?: boolean;
+  speechGain?: number;
   llm: LlmConfig;
   fallbackLlm?: LlmConfig;
   elevenlabs: { apiKey: string; voiceId: string; ttsModel: string; sttModel: string };
@@ -100,6 +103,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Locally an empty token means "auth off"; a public deployment must never run open.
   if (env.VERCEL && !deviceToken) throw new Error('SAOIRSE_DEVICE_TOKEN must be set on Vercel (an empty token would leave /api/ws open)');
   return {
+    darwinAuthorization: env.DARWIN_AUTHORIZATION,
+    logConversation: env.LOG_CONVERSATION === 'true',
+    speechGain: Math.min(2, Math.max(1, num(env, 'SPEECH_GAIN', 1.25))),
     llm: {
       baseUrl: env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
       apiKey: req(env, 'LLM_API_KEY'),
@@ -142,7 +148,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
     deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
-    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until').split(',').map(s => s.trim()).filter(Boolean),
+    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until,get_london_departures').split(',').map(s => s.trim()).filter(Boolean),
     // Home for the weather tool. A WEATHER_PLACE without both coordinates is geocoded on use, never
     // paired with London's coordinates.
     weather: (() => {

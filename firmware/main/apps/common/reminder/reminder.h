@@ -16,11 +16,12 @@ struct ReminderInfo_t {
     uint32_t durationMs = 0;
     std::string message;
     bool repeat = false;
+    uint32_t remainingMs = 0;
 };
 
 uitk::Signal<int, std::string_view>& on_reminder_triggered();
 int create_reminder(uint32_t durationMs, std::string_view message, bool repeat = false);
-void stop_reminder(int id);
+bool stop_reminder(int id);
 void update_reminders();
 std::vector<ReminderInfo_t> get_active_reminders();
 

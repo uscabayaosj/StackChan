@@ -187,7 +187,7 @@ void Hal::startXiaozhi()
     // Setup reminder handler
     tools::on_reminder_triggered().clear();
     tools::on_reminder_triggered().connect([](int id, std::string_view msg) {
-        mclog::tagInfo(_tag, "reminder triggered: id: {}, msg: {}", id, msg);
+        mclog::tagInfo(_tag, "reminder triggered: id: {}", id);
         {
             LvglLockGuard lock;
             auto& avatar = GetStackChan().avatar();

@@ -8,6 +8,7 @@
 #include <uitk/short_namespace.hpp>
 #include <mooncake_log.h>
 #include <string_view>
+#include <mutex>
 #include <hal/hal.h>
 
 using namespace uitk;
@@ -42,13 +43,15 @@ public:
         return id;
     }
 
-    void stopReminder(int id)
+    bool stopReminder(int id)
     {
         auto it = std::find_if(_reminders.begin(), _reminders.end(), [id](const Reminder& r) { return r.id == id; });
 
         if (it != _reminders.end()) {
             _reminders.erase(it);
+            return true;
         }
+        return false;
     }
 
     void update()
@@ -58,7 +61,7 @@ public:
         uint32_t now = GetHAL().millis();
 
         for (auto it = _reminders.begin(); it != _reminders.end();) {
-            if (now >= it->triggerAt) {
+            if (static_cast<int32_t>(now - it->triggerAt) >= 0) {
                 onReminderTriggered.emit(it->id, it->message);
                 if (it->repeat) {
                     it->triggerAt = now + it->duration;
@@ -76,8 +79,10 @@ public:
     {
         std::vector<tools::ReminderInfo_t> result;
         result.reserve(_reminders.size());
+        const uint32_t now = GetHAL().millis();
         for (const auto& r : _reminders) {
-            result.push_back({r.id, r.duration, r.message, r.repeat});
+            const auto remaining = static_cast<int32_t>(r.triggerAt - now);
+            result.push_back({r.id, r.duration, r.message, r.repeat, remaining > 0 ? static_cast<uint32_t>(remaining) : 0U});
         }
         return result;
     }
@@ -89,6 +94,7 @@ private:
 
 namespace tools {
 
+static std::mutex reminder_mutex;
 static std::unique_ptr<ReminderManager> _reminder_manager;
 
 static ReminderManager& get_reminder_manager()
@@ -107,18 +113,19 @@ uitk::Signal<int, std::string_view>& on_reminder_triggered()
 
 int create_reminder(uint32_t durationMs, std::string_view message, bool repeat)
 {
+    std::lock_guard lock(reminder_mutex);
     return get_reminder_manager().createReminder(durationMs, message, repeat);
 }
 
-void stop_reminder(int id)
+bool stop_reminder(int id)
 {
-    if (_reminder_manager) {
-        _reminder_manager->stopReminder(id);
-    }
+    std::lock_guard lock(reminder_mutex);
+    return _reminder_manager && _reminder_manager->stopReminder(id);
 }
 
 void update_reminders()
 {
+    std::lock_guard lock(reminder_mutex);
     if (_reminder_manager) {
         _reminder_manager->update();
     }
@@ -126,6 +133,7 @@ void update_reminders()
 
 std::vector<ReminderInfo_t> get_active_reminders()
 {
+    std::lock_guard lock(reminder_mutex);
     return get_reminder_manager().getActiveReminders();
 }
 

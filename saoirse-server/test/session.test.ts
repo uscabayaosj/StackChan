@@ -21,7 +21,7 @@ function makeEnv() {
   };
   const loud = Buffer.alloc(FRAME_BYTES); for (let i = 0; i < FRAME_BYTES; i += 2) loud.writeInt16LE(6000, i);
   const deps: SessionDeps = {
-    config: loadConfig({ LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'wss://x/api/ws', SAOIRSE_DEVICE_TOKEN: 't', VAD_SILENCE_MS: '300', VAD_MIN_SPEECH_MS: '120', WAKE_GUARD_MS: '0' }), // guard behaviour is covered in final-fixes.test.ts
+    config: loadConfig({ LLM_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', ELEVENLABS_VOICE_ID: 'v', PUBLIC_WS_URL: 'wss://x/api/ws', SAOIRSE_DEVICE_TOKEN: 't', VAD_SILENCE_MS: '300', VAD_MIN_SPEECH_MS: '120', WAKE_GUARD_MS: '0', LOG_CONVERSATION: 'true' }), // guard behaviour is covered in final-fixes.test.ts
     codec: { encodeFrame: (p) => p.subarray(0, 4), decode: (pkt) => (pkt[0] === 1 ? loud : Buffer.alloc(FRAME_BYTES)) },
     transcribe: async () => 'what is the time',
     chat: async function* () { yield '[doubtful] '; yield 'Late. '; yield 'You know that.'; },
@@ -587,7 +587,7 @@ describe('Session robot tools', () => {
     utter(s, env);
     await s.drain();
     expect(sentences(env)).toEqual(['Let me look.', 'A grey cat, judging me.']);
-    expect(toolsSeen[0].map((t: any) => t.function.name)).toEqual(['self.camera.take_photo', 'self.robot.set_head_angles']);
+    expect(toolsSeen[0].map((t: any) => t.function.name)).toEqual(['self.camera.take_photo']);
     const second = rounds[1];
     expect(second.at(-2)).toMatchObject({ role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'self.camera.take_photo' } }] });
     expect(second.at(-1)).toEqual({ role: 'tool', tool_call_id: 'c1', content: 'A grey cat sits on a desk, staring at the camera.' });
@@ -599,6 +599,7 @@ describe('Session robot tools', () => {
 
   it('a head turn: no filler, the text the model said first is spoken before the move, the robot reply is passed back', async () => {
     const env = makeEnv();
+    env.deps.transcribe = async () => 'Turn left';
     const rounds: any[][] = [];
     env.deps.chat = async function* (messages) {
       rounds.push(messages);
@@ -617,6 +618,7 @@ describe('Session robot tools', () => {
 
   it('a failing tool becomes an Error tool result, a failed photo unwraps the message, bad JSON arguments are reported', async () => {
     const env = makeEnv();
+    env.deps.transcribe = async () => 'Turn left';
     let second: any[] = [];
     env.deps.chat = async function* (messages) {
       if (!messages.some(m => m.role === 'tool')) yield toolCalls([
@@ -633,7 +635,7 @@ describe('Session robot tools', () => {
     utter(s, env);
     await s.drain();
     expect(second.filter(m => m.role === 'tool').map(m => m.content)).toEqual([
-      'Error: tool arguments were not valid JSON', 'Error: Failed to capture photo', 'Error: Unknown tool: self.robot.set_head_angles']);
+      'Error: tool arguments were not valid JSON', 'Error: Failed to capture photo', 'Error: the requested device action could not be performed safely.']);
     expect(sentences(env)).toEqual(['Let me look.', 'No luck.']);
   });
 
@@ -659,6 +661,7 @@ describe('Session robot tools', () => {
 
   it('while the robot is still listing its tools, a robot tool call is answered with "still starting up"', async () => {
     const env = makeEnv();
+    env.deps.transcribe = async () => 'Remind me to check the tea';
     let second: any[] = [];
     env.deps.chat = async function* (messages) {
       if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'a', name: 'self.robot.create_reminder', arguments: '{}' }]);
@@ -675,6 +678,7 @@ describe('Session robot tools', () => {
 
   it('stops after MAX_TOOL_ROUNDS rounds of tool calls and says so', async () => {
     const env = makeEnv();
+    env.deps.transcribe = async () => 'Turn left';
     let n = 0;
     env.deps.chat = async function* () { n++; yield toolCalls([{ id: `h${n}`, name: 'self.robot.set_head_angles', arguments: '{"yaw":0}' }]); };
     const s = new Session(env.socket, env.deps, 'aa:bb');

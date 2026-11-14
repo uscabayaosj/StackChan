@@ -1,3 +1,4 @@
+import { transportTool, type LiveCard } from './live_cards.js';
 import type { Config } from './config.js';
 import type { ToolSpec } from './llm.js';
 import { createUtilityTools } from './utility_tools.js';
@@ -6,7 +7,7 @@ import { createUtilityTools } from './utility_tools.js';
 export interface ServerTool {
   spec: ToolSpec;
   timeoutMs: number;
-  run(args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
+  run(args: Record<string, unknown>, signal: AbortSignal, display?: (card: LiveCard) => void): Promise<string>;
 }
 
 /** WMO weather interpretation codes (Open-Meteo `weather_code`). */
@@ -62,7 +63,7 @@ function weatherTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
         },
       },
     },
-    async run(args, signal) {
+    async run(args, signal, display) {
       let { latitude, longitude, place, timezone } = { latitude: home.latitude, longitude: home.longitude, place: home.place, timezone: cfg.deviceTz };
       const asked = (typeof args.place === 'string' ? args.place.trim() : '') || (home.hasCoordinates ? '' : home.place);
       if (asked && (asked.toLowerCase() !== home.place.toLowerCase() || !home.hasCoordinates)) {
@@ -78,14 +79,22 @@ function weatherTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
         + '&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m'
         + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset'
         + `&timezone=${encodeURIComponent(timezone)}&forecast_days=${days}`;
-      return formatForecast(place, await getJson(url, fetchImpl, signal), days);
+      const forecast = await getJson(url, fetchImpl, signal);
+      if (!Number.isFinite(forecast?.current?.temperature_2m)) return 'Error: current weather was missing from the feed.';
+      const c = forecast.current;
+      display?.({ title: place + ' weather', source: 'Open-Meteo • current conditions', rows: [
+        `${round(c.temperature_2m)}°C • ${describeWeatherCode(c.weather_code)}`,
+        `Feels like ${round(c.apparent_temperature)}°C • Wind ${round(c.wind_speed_10m)} km/h`,
+        ...(days > 1 && forecast.daily?.time?.[1] ? [`Tomorrow ${round(forecast.daily.temperature_2m_min?.[1])} to ${round(forecast.daily.temperature_2m_max?.[1])}°C`] : []),
+      ] });
+      return formatForecast(place, forecast, days);
     },
   };
 }
 
 export const SEARCH_SYSTEM_PROMPT =
   'Answer the query with current, specific facts in two to four plain sentences, as briefly as the question allows. ' +
-  'Include dates and numbers when they matter. No citation markers, no URLs, no markdown. If you cannot find it, say so.';
+  'Include dates and numbers when they matter. Use original sources where possible. If you cannot find it, say so.';
 
 /** Removes citation markers like [1] or [2][3] and stray markdown emphasis. */
 export function cleanSearchAnswer(text: string): string {
@@ -121,14 +130,26 @@ function webSearchTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
       const json: any = await res.json();
       const text = json?.choices?.[0]?.message?.content;
       if (typeof text !== 'string' || !text.trim()) return 'The search returned nothing.';
-      return cleanSearchAnswer(text).slice(0, 1200);
+      const sources = new Map<string, string>();
+      for (const entry of [...(Array.isArray(json.search_results) ? json.search_results : []),
+                           ...(Array.isArray(json.citations) ? json.citations : [])]) {
+        const url = typeof entry === 'string' ? entry : entry?.url;
+        if (typeof url !== 'string' || sources.size >= 5) continue;
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== 'https:' || sources.has(parsed.href)) continue;
+          sources.set(parsed.href, typeof entry?.title === 'string' ? entry.title.slice(0, 120) : parsed.hostname);
+        } catch { /* ignore invalid source URLs */ }
+      }
+      const answer = cleanSearchAnswer(text).slice(0, 1200);
+      return sources.size ? JSON.stringify({ answer, sources: [...sources].map(([url, name]) => ({ name, url })) }) : answer;
     },
   };
 }
 
 /** The server tools enabled by `cfg.serverTools` (get_weather, web_search, calculate, convert_units, seconds_until). */
 export function createServerTools(cfg: Config, fetchImpl: typeof fetch = fetch): ServerTool[] {
-  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz)];
+  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz), transportTool(fetchImpl, cfg.darwinAuthorization)];
   const on = new Set(cfg.serverTools);
   return all.filter(t => on.has(t.spec.function.name));
 }

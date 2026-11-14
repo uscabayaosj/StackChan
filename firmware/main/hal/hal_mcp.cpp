@@ -5,6 +5,8 @@
  */
 #include "hal.h"
 #include <stdexcept>
+#include <cJSON.h>
+#include <freertos/task.h>
 #include <mooncake_log.h>
 #include <mcp_server.h>
 #include <stackchan/stackchan.h>
@@ -59,21 +61,33 @@ void Hal::xiaozhi_mcp_init()
 
                            mclog::tagInfo(_tag, "motion set_angles: yaw: {}, pitch: {}, speed: {}", yaw, pitch, speed);
 
-                           LvglLockGuard lock;
+                           {
+                               LvglLockGuard lock;
 
-                           auto& motion = GetStackChan().motion();
-                           // Locked while she's lying on her side or being shaken: don't drive the servos then.
-                           if (motion.isModifyLocked()) {
-                               throw std::runtime_error("Head can't move right now (fallen over or being shaken)");
-                           }
-                           if (pitch != -9999) {
-                               motion.pitchServo().moveWithSpeed(pitch * 10, speed);
-                           }
-                           if (yaw != -9999) {
-                               motion.yawServo().moveWithSpeed(yaw * 10, speed);
-                           }
+                               auto& motion = GetStackChan().motion();
+                               // Locked while she's lying on her side or being shaken: don't drive the servos then.
+                               if (motion.isModifyLocked()) {
+                                   throw std::runtime_error("Head can't move right now (fallen over or being shaken)");
+                               }
+                               if (pitch != -9999) {
+                                   motion.pitchServo().moveWithSpeed(pitch * 10, speed);
+                               }
+                               if (yaw != -9999) {
+                                   motion.yawServo().moveWithSpeed(yaw * 10, speed);
+                               }
 
-                           return true;
+                           }
+                           for (int i = 0; i < 60; ++i) {
+                               {
+                                   LvglLockGuard lock;
+                                   auto& motion = GetStackChan().motion();
+                                   if (motion.isModifyLocked()) throw std::runtime_error("Head movement interrupted");
+                                   if ((yaw == -9999 || !motion.yawServo().isMoving()) &&
+                                       (pitch == -9999 || !motion.pitchServo().isMoving())) return true;
+                               }
+                               vTaskDelay(pdMS_TO_TICKS(50));
+                           }
+                           throw std::runtime_error("Head did not settle");
                        });
 
     mclog::tagInfo(_tag, "add robot.set_led_color tool");
@@ -125,8 +139,7 @@ void Hal::xiaozhi_mcp_init()
                                message = "Time's up!";
                            }
 
-                           mclog::tagInfo(_tag, "create_reminder: duration={}s, message={}, repeat={}",
-                                          duration_seconds, message, repeat);
+                           mclog::tagInfo(_tag, "create_reminder: duration={}s, repeat={}", duration_seconds, repeat);
 
                            int id = tools::create_reminder(duration_seconds * 1000, message, repeat);
 
@@ -137,20 +150,17 @@ void Hal::xiaozhi_mcp_init()
     mcp_server.AddTool("self.robot.get_reminders", "Get list of active reminders.", std::vector<Property>{},
                        [this](const PropertyList& properties) -> ReturnValue {
                            mclog::tagInfo(_tag, "get_reminders");
-                           auto reminders          = tools::get_active_reminders();
-                           std::string result_json = "[";
-                           for (size_t i = 0; i < reminders.size(); ++i) {
-                               const auto& r = reminders[i];
-                               result_json +=
-                                   fmt::format(R"({{"id": {}, "duration_ms": {}, "message": "{}", "repeat": {}}})",
-                                               r.id, r.durationMs, r.message, r.repeat ? "true" : "false");
-                               if (i < reminders.size() - 1) {
-                                   result_json += ", ";
-                               }
+                           auto result = cJSON_CreateArray();
+                           for (const auto& reminder : tools::get_active_reminders()) {
+                               auto item = cJSON_CreateObject();
+                               cJSON_AddNumberToObject(item, "id", reminder.id);
+                               cJSON_AddNumberToObject(item, "duration_ms", reminder.durationMs);
+                               cJSON_AddNumberToObject(item, "remaining_ms", reminder.remainingMs);
+                               cJSON_AddStringToObject(item, "message", reminder.message.c_str());
+                               cJSON_AddBoolToObject(item, "repeat", reminder.repeat);
+                               cJSON_AddItemToArray(result, item);
                            }
-                           result_json += "]";
-                           mclog::tagInfo(_tag, "get_reminders result: {}", result_json);
-                           return result_json;
+                           return result;
                        });
 
     mclog::tagInfo(_tag, "add robot.stop_reminder tool");
@@ -159,7 +169,7 @@ void Hal::xiaozhi_mcp_init()
                        [this](const PropertyList& properties) -> ReturnValue {
                            int id = properties["id"].value<int>();
                            mclog::tagInfo(_tag, "stop_reminder: id={}", id);
-                           tools::stop_reminder(id);
+                           if (!tools::stop_reminder(id)) throw std::runtime_error("No active reminder with that ID");
                            return true;
                        });
 }

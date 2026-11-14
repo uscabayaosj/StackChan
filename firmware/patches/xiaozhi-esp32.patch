@@ -1,5 +1,5 @@
 diff --git a/main/application.cc b/main/application.cc
-index d69d43d..fb2a944 100644
+index d69d43d..39848a8 100644
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -1,14 +1,15 @@
@@ -147,7 +147,28 @@ index d69d43d..fb2a944 100644
                  Schedule([this]() {
                      if (GetDeviceState() == kDeviceStateSpeaking) {
                          if (listening_mode_ == kListeningModeManualStop) {
-@@ -609,36 +657,6 @@ void Application::InitializeProtocol() {
+@@ -580,6 +628,20 @@ void Application::InitializeProtocol() {
+                     ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
+                 }
+             }
++        } else if (strcmp(type->valuestring, "info_card") == 0) {
++            auto card = cJSON_GetObjectItem(root, "card");
++            auto title = cJSON_GetObjectItem(card, "title");
++            auto source = cJSON_GetObjectItem(card, "source");
++            auto rows = cJSON_GetObjectItem(card, "rows");
++            if (cJSON_IsString(title) && cJSON_IsString(source) && cJSON_IsArray(rows)) {
++                auto label = std::string(title->valuestring).substr(0, 100) + "\n" +
++                             std::string(source->valuestring).substr(0, 80);
++                for (int i = 0; i < 4; ++i) {
++                    auto row = cJSON_GetArrayItem(rows, i);
++                    if (cJSON_IsString(row)) label += "\n\n" + std::string(row->valuestring).substr(0, 150);
++                }
++                Schedule([display, label = std::move(label)]() { display->ShowNotification(label.c_str(), 20000); });
++            }
+         } else if (strcmp(type->valuestring, "alert") == 0) {
+             auto status = cJSON_GetObjectItem(root, "status");
+             auto message = cJSON_GetObjectItem(root, "message");
+@@ -609,36 +671,6 @@ void Application::InitializeProtocol() {
      protocol_->Start();
  }
  
@@ -184,7 +205,7 @@ index d69d43d..fb2a944 100644
  void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
      ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
      auto display = Board::GetInstance().GetDisplay();
-@@ -716,8 +734,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
+@@ -716,8 +748,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
          return;
      }
  
@@ -198,7 +219,7 @@ index d69d43d..fb2a944 100644
              return;
          }
      }
-@@ -825,8 +848,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+@@ -825,8 +862,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
          return;
      }
  
@@ -212,7 +233,7 @@ index d69d43d..fb2a944 100644
              audio_service_.EnableWakeWordDetection(true);
              return;
          }
-@@ -914,7 +942,7 @@ void Application::HandleStateChangedEvent() {
+@@ -914,7 +956,7 @@ void Application::HandleStateChangedEvent() {
                  // Only AFE wake word can be detected in speaking mode
                  audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
              }
@@ -221,7 +242,7 @@ index d69d43d..fb2a944 100644
              break;
          case kDeviceStateWifiConfiguring:
              audio_service_.EnableVoiceProcessing(false);
-@@ -935,6 +963,7 @@ void Application::Schedule(std::function<void()>&& callback) {
+@@ -935,6 +977,7 @@ void Application::Schedule(std::function<void()>&& callback) {
  }
  
  void Application::AbortSpeaking(AbortReason reason) {
@@ -229,7 +250,7 @@ index d69d43d..fb2a944 100644
      ESP_LOGI(TAG, "Abort speaking");
      aborted_ = true;
      if (protocol_) {
-@@ -1116,4 +1145,3 @@ void Application::ResetProtocol() {
+@@ -1116,4 +1159,3 @@ void Application::ResetProtocol() {
          protocol_.reset();
      });
  }
