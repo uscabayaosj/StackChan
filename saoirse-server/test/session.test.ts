@@ -750,8 +750,10 @@ describe('Session server tools', () => {
     expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Eight degrees and clear.']);
   });
 
-  it('displays the bus board and speaks one arrival without another model round', async () => {
+  it('displays the full bus board, skips a model preamble, and caps a timetable follow-up', async () => {
     const env = makeEnv();
+    let transcript = 'Are there any buses from Clapham Common?';
+    env.deps.transcribe = async () => transcript;
     const card = { title: 'Clapham Common', source: 'TfL', rows: ['1 min 50', '3 min 88'] };
     const summary = 'The 50 to Stockwell is due in 1 minute.';
     env.deps.serverTools = [{
@@ -765,7 +767,14 @@ describe('Session server tools', () => {
     let rounds = 0;
     env.deps.chat = async function* () {
       rounds++;
-      yield { type: 'tool_calls', calls: [{ id: 'bus', name: 'get_london_departures', arguments: '{}' }] };
+      if (rounds === 1) {
+        yield '[neutral] Let me check. Here is what I found. ';
+        yield { type: 'tool_calls', calls: [{ id: 'bus', name: 'get_london_departures', arguments: '{"mode":"bus","stop":"Clapham Common"}' }] };
+      } else {
+        yield '[neutral] The live board only shows upcoming buses. ';
+        yield 'It cannot answer for next Friday. ';
+        yield 'Here is a longer explanation that should not play.';
+      }
     };
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await s.handleText(hello);
@@ -775,6 +784,17 @@ describe('Session server tools', () => {
     expect(rounds).toBe(1);
     expect(env.sent).toContainEqual(expect.objectContaining({ type: 'info_card', card }));
     expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual([summary]);
+    expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+
+    transcript = 'And next Friday?';
+    env.advance(1000);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual([
+      summary, 'The live board only shows upcoming buses.', 'It cannot answer for next Friday.',
+    ]);
+    expect(env.sent.filter(m => m.type === 'info_card')).toHaveLength(1);
     expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
   });
 

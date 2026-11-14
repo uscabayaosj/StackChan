@@ -344,6 +344,10 @@ export class Session {
     this.history.push({ role: 'user', content: text });
     this.trimHistory();
 
+    const transport = parseBusRequest(text, this.lastTransport);
+    let busReply = Boolean(transport) || /\b(?:bus|buses)\b/i.test(text) ||
+      (this.lastTransport?.mode === 'bus' && /^(?:(?:and|what about|how about)\s+)?(?:next\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)\b/i.test(text.trim()));
+
     const localTime = formatLocalTime(new Date(this.deps.now()), this.deps.config.deviceTz);
     const { hour, minute } = localHourMinute(new Date(this.deps.now()), this.deps.config.deviceTz);
     const system = `${SYSTEM_PROMPT}\nRobot tools currently available: ${this.mcp.tools.map(tool => tool.name).join(', ') || 'none confirmed yet'}.\n\nCurrent local time: ${localTime} (say it as: ${spokenTime(hour, minute)})`;
@@ -369,7 +373,7 @@ export class Session {
     };
 
     const speak = async (sentence: string) => {
-      if (this.abortRequested || !this.socket.isOpen) return;
+      if (this.abortRequested || !this.socket.isOpen || (busReply && spoken.length >= 2)) return;
       if (!ttsStarted) { this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'start' }); ttsStarted = true; this.state = 'speaking'; }
       this.socket.sendText({ session_id: this.sessionId, type: 'tts', state: 'sentence_start', text: sentence });
       spoken.push(sentence);
@@ -412,7 +416,6 @@ export class Session {
     try {
       const working: ChatMessage[] = [...messages];
       let calls: ToolCall[] | null = null;
-      const transport = parseBusRequest(text, this.lastTransport);
       if (transport && this.deps.serverTools?.some(t => t.spec.function.name === 'get_london_departures')) {
         const call = { id: 'bus', name: 'get_london_departures', arguments: JSON.stringify(transport) };
         const [result] = await this.runTools([call], signal, { writesAllowed: false, cameraAvailable: false });
@@ -478,9 +481,15 @@ export class Session {
             if (!text) continue;
           }
           roundText += text;
-          await handleChunk(text);
+          // A bus tool can supply the spoken summary. Hold any preamble until we know
+          // whether the model is calling a tool or answering without one.
+          if (!busReply) await handleChunk(text);
         }
-        if (this.abortRequested || !calls) break;
+        if (this.abortRequested) break;
+        if (!calls) {
+          if (busReply) await handleChunk(roundText);
+          break;
+        }
         if (briefing) break;
         // Nothing to feed the results back into: don't run the robot for a reply that cannot follow.
         if (round === MAX_TOOL_ROUNDS) break;
@@ -511,7 +520,8 @@ export class Session {
         }
         const summary = results.length === 1 ? results[0].summary : undefined;
         // A simple bus board already has a factual, concise announcement.
-        if (summary && !this.abortRequested && !spoken.length) {
+        if (summary && !this.abortRequested) {
+          busReply = true;
           full = summary;
           if (!emotionSent) sendEmotion();
           await speak(summary);
@@ -555,7 +565,7 @@ export class Session {
         }
       }
       // A finished reply is stored whole; an aborted or failed one only as far as it was spoken.
-      const reply = completed ? full.trim() : spoken.join(' ');
+      const reply = completed && !busReply ? full.trim() : spoken.join(' ');
       if (reply) this.history.push({ role: 'assistant', content: reply });
       this.trimHistory();
       this.lastSpeechAt = this.deps.now();
