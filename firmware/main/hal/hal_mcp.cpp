@@ -6,6 +6,7 @@
 #include "hal.h"
 #include <stdexcept>
 #include <cJSON.h>
+#include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <mooncake_log.h>
 #include <mcp_server.h>
