@@ -133,9 +133,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     otaSecret: otaSecret,
     publicWsUrl: req(env, 'PUBLIC_WS_URL'),
     vad: {
-      rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.025),
+      rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.015),
       silenceMs: num(env, 'VAD_SILENCE_MS', 1_200),
-      minSpeechMs: num(env, 'VAD_MIN_SPEECH_MS', 300),
+      minSpeechMs: num(env, 'VAD_MIN_SPEECH_MS', 180),
       preRollMs: num(env, 'VAD_PREROLL_MS', 300),
     },
     idleCloseMs: num(env, 'IDLE_CLOSE_MS', 60_000),

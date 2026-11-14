@@ -16,7 +16,7 @@ describe('loadConfig', () => {
     expect(c.llm.reasoningEffort).toBe('low');
     expect(c.elevenlabs.ttsModel).toBe('eleven_flash_v2_5');
     expect(c.elevenlabs.sttModel).toBe('scribe_v2');
-    expect(c.vad.rmsThreshold).toBeCloseTo(0.025);
+    expect(c.vad.rmsThreshold).toBeCloseTo(0.015);
     expect(c.vad.silenceMs).toBe(1200);
     expect(c.echoGuardMs).toBe(250);
     expect(c.wakeGuardMs).toBe(800);
