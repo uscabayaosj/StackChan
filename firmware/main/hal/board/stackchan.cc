@@ -15,6 +15,7 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_ili9341.h>
+#include <esp_rom_sys.h>
 #include <esp_timer.h>
 #include <algorithm>
 #include <mutex>
@@ -216,17 +217,41 @@ private:
 };
 
 class Aw9523 : public I2cDevice {
+private:
+    static constexpr uint8_t kPort1OutputReg = 0x03;
+    static constexpr uint8_t kPort1DirectionReg = 0x05;
+    static constexpr uint8_t kBoostEnable = 0x80;
+    static constexpr uint8_t kPort1Outputs = 0x0F;
+
 public:
-    // Exanpd IO Init
     Aw9523(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr)
     {
+        // Leave the 5 V rail on if only the ESP32 restarted.
+        const bool boost_running = !(ReadReg(kPort1DirectionReg) & kBoostEnable)
+                                   && (ReadReg(kPort1OutputReg) & kBoostEnable);
         WriteReg(0x02, 0b00000111);  // P0
-        WriteReg(0x03, 0b10001111);  // P1
+        WriteReg(kPort1OutputReg, boost_running ? kPort1Outputs | kBoostEnable : kPort1Outputs);
         WriteReg(0x04, 0b00011000);  // CONFIG_P0
-        WriteReg(0x05, 0b00001100);  // CONFIG_P1
+        WriteReg(kPort1DirectionReg, 0b00001100);
         WriteReg(0x11, 0b00010000);  // GCR P0 port is Push-Pull mode.
         WriteReg(0x12, 0b11111111);  // LEDMODE_P0
         WriteReg(0x13, 0b11111111);  // LEDMODE_P1
+
+        if (!boost_running) {
+            // Precharge the 5 V rail in pulses to limit inrush at battery cold boot.
+            constexpr uint32_t recovery_us[] = {
+                30000, 25000, 20000, 16000, 13000, 10000, 8000, 6000, 5000, 4000,
+                3000, 2500, 2000, 1500, 1200, 1000, 800, 600, 400, 300,
+            };
+            for (const uint32_t off_us : recovery_us) {
+                WriteReg(kPort1OutputReg, kPort1Outputs | kBoostEnable);
+                esp_rom_delay_us(150);
+                WriteReg(kPort1OutputReg, kPort1Outputs);
+                esp_rom_delay_us(off_us);
+            }
+            WriteReg(kPort1OutputReg, kPort1Outputs | kBoostEnable);
+            ESP_LOGI(TAG, "5 V boost precharge complete");
+        }
     }
 
     void ResetAw88298()
