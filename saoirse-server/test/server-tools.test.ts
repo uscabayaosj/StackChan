@@ -15,8 +15,8 @@ const tool = (name: string, fetchImpl: typeof fetch, c = cfg) => createServerToo
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 describe('config', () => {
-  it('defaults: all six server tools, London home, Perplexity Sonar on the LLM key', () => {
-    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units', 'seconds_until', 'get_london_departures']);
+  it('defaults: all seven server tools, London home, Perplexity Sonar on the LLM key', () => {
+    expect(cfg.serverTools).toEqual(['get_weather', 'web_search', 'calculate', 'convert_units', 'seconds_until', 'get_london_departures', 'show_word_definition']);
     expect(cfg.weather).toEqual({ place: 'London', latitude: 51.5072, longitude: -0.1276, hasCoordinates: true });
     expect(cfg.search).toMatchObject({ model: 'perplexity/sonar', apiKey: 'k', baseUrl: 'https://openrouter.ai/api/v1', timeoutMs: 15000 });
     const only = loadConfig({ ...base, SERVER_TOOLS: 'calculate', WEATHER_PLACE: 'Dublin', WEATHER_LATITUDE: '53.33', WEATHER_LONGITUDE: '-6.25' });

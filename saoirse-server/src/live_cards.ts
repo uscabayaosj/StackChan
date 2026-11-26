@@ -4,6 +4,21 @@ export interface LiveCard {
   title: string;
   source: string;
   rows: string[];
+  kind?: 'definition';
+  hero?: string;
+  subtitle?: string;
+  items?: LiveCardItem[];
+}
+
+export interface LiveCardItem { title: string; detail?: string; badge?: string }
+
+export function makeLiveCard(kind: NonNullable<LiveCard['kind']>, title: string, source: string, items: LiveCardItem[],
+  heading: Pick<LiveCard, 'hero' | 'subtitle'> = {}): LiveCard {
+  const visible = items.slice(0, 12);
+  return { kind, title, source, ...heading, items: visible, rows: [
+    ...[heading.hero, heading.subtitle].filter((line): line is string => Boolean(line)),
+    ...visible.map(item => `${item.badge ? `${item.badge}  ` : ''}${item.title}${item.detail ? `\n${item.detail}` : ''}`),
+  ] };
 }
 
 export function transportTool(fetchImpl: typeof fetch, darwinAuthorization?: string): ServerTool {

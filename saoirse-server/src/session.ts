@@ -344,6 +344,7 @@ export class Session {
     this.history.push({ role: 'user', content: text });
     this.trimHistory();
 
+    const definitionRequest = /\b(?:define|definition of|meaning of|what (?:does|do|did)\b[^?]*\bmean)\b/i.test(text);
     const transport = parseBusRequest(text, this.lastTransport);
     let busReply = Boolean(transport) || /\b(?:bus|buses)\b/i.test(text) ||
       (this.lastTransport?.mode === 'bus' && /^(?:(?:and|what about|how about)\s+)?(?:next\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)\b/i.test(text.trim()));
@@ -457,6 +458,7 @@ export class Session {
         const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()]
           .filter(tool => !transport || tool.function.name !== 'get_london_departures')
           .filter(tool => (!DEVICE_WRITES.has(tool.function.name) || writesAllowed && permitted.has(tool.function.name)));
+        const holdForDefinition = definitionRequest && tools.some(tool => tool.function.name === 'show_word_definition');
         let roundText = '';
         // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
         // the face and is never spoken. The tag can be split across chunks, so hold text until it is decided.
@@ -481,19 +483,21 @@ export class Session {
             if (!text) continue;
           }
           roundText += text;
-          // A bus tool can supply the spoken summary. Hold any preamble until we know
+          // A board or definition card can supply the spoken summary. Hold any preamble until we know
           // whether the model is calling a tool or answering without one.
-          if (!busReply) await handleChunk(text);
+          if (!busReply && !holdForDefinition) await handleChunk(text);
         }
         if (this.abortRequested) break;
         if (!calls) {
-          if (busReply) await handleChunk(roundText);
+          if (busReply || holdForDefinition) await handleChunk(roundText);
           break;
         }
         if (briefing) break;
         // Nothing to feed the results back into: don't run the robot for a reply that cannot follow.
         if (round === MAX_TOOL_ROUNDS) break;
-        // What the model said before asking for tools is heard first; a photo gets a filler if it said nothing.
+        const definitionCall = calls.some(call => call.name === 'show_word_definition');
+        if (holdForDefinition && !definitionCall && !busReply) await handleChunk(roundText);
+        // A photo gets a filler if the model said nothing before its tool call.
         await flushText();
         if (!/\s$/.test(full)) full += ' ';
         if (calls.some(c => c.name === CAMERA_TOOL) && spoken.length === 0) await speak(CAMERA_FILLER);
@@ -519,17 +523,18 @@ export class Session {
           this.timers.clearTimeout(keepAlive);
         }
         const summary = results.length === 1 ? results[0].summary : undefined;
-        // A simple bus board already has a factual, concise announcement.
+        // A card can supply a concise spoken announcement.
         if (summary && !this.abortRequested) {
           busReply = true;
           full = summary;
+          if (definitionCall) replyRoute = 'definition card';
           if (!emotionSent) sendEmotion();
           await speak(summary);
           calls = null;
           break;
         }
         working.push({
-          role: 'assistant', content: stripTag(roundText).trim() || null,
+          role: 'assistant', content: definitionCall ? null : stripTag(roundText).trim() || null,
           tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
         });
         for (const r of results) working.push({ role: 'tool', tool_call_id: r.id, content: r.text });

@@ -1,4 +1,4 @@
-import { transportTool, type LiveCard } from './live_cards.js';
+import { makeLiveCard, transportTool, type LiveCard } from './live_cards.js';
 import type { Config } from './config.js';
 import type { ToolSpec } from './llm.js';
 import { createUtilityTools } from './utility_tools.js';
@@ -150,9 +150,49 @@ function webSearchTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
   };
 }
 
-/** The server tools enabled by `cfg.serverTools` (get_weather, web_search, calculate, convert_units, seconds_until). */
+function wordDefinitionTool(timeoutMs: number): ServerTool {
+  return {
+    timeoutMs,
+    spec: { type: 'function', function: {
+      name: 'show_word_definition',
+      description: 'Shows a word or expression, its meaning and an example when the user asks for a definition. Speaks the meaning too. Use the intended sense from the question.',
+      parameters: { type: 'object', properties: {
+        word: { type: 'string', description: 'The correctly spelled word or expression.' },
+        part_of_speech: { type: 'string', description: 'For example noun, adjective, phrasal verb, or idiom. Omit if it is unclear.' },
+        definition: { type: 'string', description: 'One plain-text phrase, about 8–20 words, that can follow “means”.' },
+        example: { type: 'string', description: 'One short natural sentence using the word in this sense.' },
+      }, required: ['word', 'definition', 'example'] },
+    } },
+    async run(args, signal, display) {
+      const field = (key: string) => typeof args[key] === 'string'
+        ? args[key].replace(/\s+/g, ' ').trim() : '';
+      const word = field('word');
+      const partOfSpeech = field('part_of_speech');
+      const definition = field('definition');
+      const example = field('example');
+      // Match the firmware's UTF-8 byte limits for the corresponding card fields.
+      if (!word || !definition || !example || Buffer.byteLength(word) > 120 ||
+          Buffer.byteLength(partOfSpeech) > 48 || Buffer.byteLength(definition) > 160 ||
+          Buffer.byteLength(example) > 200) {
+        return 'Error: provide the word, a brief definition, and a short example that fit on the card.';
+      }
+      const longHeadword = Array.from(word).length > 20;
+      const card = makeLiveCard('definition', longHeadword ? 'Word meaning' : word, 'Definition', [
+        longHeadword ? { title: word, detail: definition } : { title: definition },
+        { title: 'In a sentence', detail: example },
+      ], partOfSpeech ? { subtitle: partOfSpeech } : {});
+      if (!signal.aborted) {
+        const punctuation = /[.!?]$/.test(definition) ? '' : '.';
+        display?.(card, `${word} means ${definition}${punctuation}`);
+      }
+      return JSON.stringify(card);
+    },
+  };
+}
+
+/** The server tools enabled by `cfg.serverTools`. */
 export function createServerTools(cfg: Config, fetchImpl: typeof fetch = fetch): ServerTool[] {
-  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz), transportTool(fetchImpl, cfg.darwinAuthorization)];
+  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz), transportTool(fetchImpl, cfg.darwinAuthorization), wordDefinitionTool(cfg.toolTimeoutMs.other)];
   const on = new Set(cfg.serverTools);
   return all.filter(t => on.has(t.spec.function.name));
 }

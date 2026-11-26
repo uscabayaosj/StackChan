@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Session, MAX_LEAD_FRAMES, DEVICE_DECODE_QUEUE_FRAMES, TTS_STOP_MARGIN_MS, MAX_TOOL_ROUNDS, LOOP_FILLER, type SessionDeps, type SessionSocket } from '../src/session.js';
 import { loadConfig } from '../src/config.js';
 import { FRAME_BYTES } from '../src/opus.js';
 import { SYSTEM_PROMPT } from '../src/persona.js';
+import { createServerTools } from '../src/server_tools.js';
 
 function makeEnv() {
   const sent: any[] = [];
@@ -44,6 +45,37 @@ function utter(s: Session, env: ReturnType<typeof makeEnv>) {
 }
 
 const hello = JSON.stringify({ type: 'hello', version: 1, transport: 'websocket', audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 } });
+
+describe('Word definition cards', () => {
+  it('shows a definition card and speaks the same meaning without another model round', async () => {
+    const env = makeEnv();
+    env.deps.serverTools = createServerTools(env.deps.config);
+    env.deps.transcribe = async () => 'What does serendipity mean?';
+    const definition = 'finding something good by chance';
+    const example = 'It was serendipity that we met again on the same train.';
+    const chat = env.deps.chat = vi.fn<SessionDeps['chat']>(async function* (_messages, _signal, tools) {
+      expect(tools?.some(tool => tool.function.name === 'show_word_definition')).toBe(true);
+      yield '[neutral] I’ll give you a definition. Here’s a different example.';
+      yield { type: 'tool_calls' as const, calls: [{
+        id: 'definition', name: 'show_word_definition',
+        arguments: JSON.stringify({ word: 'serendipity', part_of_speech: 'noun', definition, example }),
+      }] };
+    });
+    const s = new Session(env.socket, env.deps, 'definition-test');
+    await s.handleText(hello);
+    await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+    utter(s, env);
+    await s.drain();
+    expect(env.sent.find(event => event.type === 'info_card')?.card).toMatchObject({
+      kind: 'definition', title: 'serendipity', source: 'Definition', subtitle: 'noun',
+      items: [{ title: definition }, { title: 'In a sentence', detail: example }],
+    });
+    expect(env.sent.filter(event => event.type === 'tts' && event.state === 'sentence_start')
+      .map(event => event.text)).toEqual(['serendipity means finding something good by chance.']);
+    expect(env.bins.length).toBeGreaterThan(0);
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('Session', () => {
   it('answers hello with transport, session_id and 24 kHz opus params (the robot speaker rate)', async () => {

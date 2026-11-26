@@ -156,7 +156,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
     deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
-    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until,get_london_departures').split(',').map(s => s.trim()).filter(Boolean),
+    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until,get_london_departures,show_word_definition').split(',').map(s => s.trim()).filter(Boolean),
     // Home for the weather tool. A WEATHER_PLACE without both coordinates is geocoded on use, never
     // paired with London's coordinates.
     weather: (() => {
