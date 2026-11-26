@@ -1,10 +1,11 @@
 diff --git a/main/application.cc b/main/application.cc
-index d69d43d..39848a8 100644
+index d69d43d0ea7c7c1037604ec259446c54f0b0c5cb..e27e56b13803ada0dc6a9dd3c09ee0c9730439b6 100644
 --- a/main/application.cc
 +++ b/main/application.cc
-@@ -1,14 +1,15 @@
+@@ -1,14 +1,16 @@
  #include "application.h"
 +#include <hal/hal.h>
++#include <apps/common/reminder/reminder.h>
 +#include "assets.h"
 +#include "assets/lang_config.h"
 +#include "audio_codec.h"
@@ -24,7 +25,7 @@ index d69d43d..39848a8 100644
  
  #include <cstring>
  #include <esp_log.h>
-@@ -19,6 +20,17 @@
+@@ -19,6 +21,17 @@
  
  #define TAG "Application"
  
@@ -42,7 +43,7 @@ index d69d43d..39848a8 100644
  
  Application::Application() {
      event_group_ = xEventGroupCreate();
-@@ -249,6 +261,20 @@ void Application::Run() {
+@@ -249,6 +262,20 @@ void Application::Run() {
              clock_ticks_++;
              auto display = Board::GetInstance().GetDisplay();
              display->UpdateStatusBar();
@@ -63,7 +64,7 @@ index d69d43d..39848a8 100644
          
              // Print debug info every 10 seconds
              if (clock_ticks_ % 10 == 0) {
-@@ -399,6 +425,7 @@ void Application::CheckNewVersion() {
+@@ -399,6 +426,7 @@ void Application::CheckNewVersion() {
      const int MAX_RETRY = 10;
      int retry_count = 0;
      int retry_delay = 10; // Initial retry delay in seconds
@@ -71,7 +72,7 @@ index d69d43d..39848a8 100644
  
      auto& board = Board::GetInstance();
      while (true) {
-@@ -441,15 +468,18 @@ void Application::CheckNewVersion() {
+@@ -441,15 +469,18 @@ void Application::CheckNewVersion() {
  
          // No new version, mark the current version as valid
          ota_->MarkCurrentVersionValid();
@@ -94,7 +95,7 @@ index d69d43d..39848a8 100644
          }
  
          // This will block the loop until the activation is done or timeout
-@@ -491,13 +521,20 @@ void Application::InitializeProtocol() {
+@@ -491,13 +522,20 @@ void Application::InitializeProtocol() {
      });
  
      protocol_->OnNetworkError([this](const std::string& message) {
@@ -117,7 +118,7 @@ index d69d43d..39848a8 100644
          }
      });
      
-@@ -510,6 +547,7 @@ void Application::InitializeProtocol() {
+@@ -510,6 +548,7 @@ void Application::InitializeProtocol() {
      });
      
      protocol_->OnAudioChannelClosed([this, &board]() {
@@ -125,7 +126,7 @@ index d69d43d..39848a8 100644
          board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
          Schedule([this]() {
              auto display = Board::GetInstance().GetDisplay();
-@@ -524,11 +562,21 @@ void Application::InitializeProtocol() {
+@@ -524,11 +563,21 @@ void Application::InitializeProtocol() {
          if (strcmp(type->valuestring, "tts") == 0) {
              auto state = cJSON_GetObjectItem(root, "state");
              if (strcmp(state->valuestring, "start") == 0) {
@@ -147,28 +148,43 @@ index d69d43d..39848a8 100644
                  Schedule([this]() {
                      if (GetDeviceState() == kDeviceStateSpeaking) {
                          if (listening_mode_ == kListeningModeManualStop) {
-@@ -580,6 +628,20 @@ void Application::InitializeProtocol() {
+@@ -580,6 +629,35 @@ void Application::InitializeProtocol() {
                      ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
                  }
              }
 +        } else if (strcmp(type->valuestring, "info_card") == 0) {
-+            auto card = cJSON_GetObjectItem(root, "card");
-+            auto title = cJSON_GetObjectItem(card, "title");
-+            auto source = cJSON_GetObjectItem(card, "source");
-+            auto rows = cJSON_GetObjectItem(card, "rows");
-+            if (cJSON_IsString(title) && cJSON_IsString(source) && cJSON_IsArray(rows)) {
-+                auto label = std::string(title->valuestring).substr(0, 100) + "\n" +
-+                             std::string(source->valuestring).substr(0, 80);
-+                for (int i = 0; i < 4; ++i) {
-+                    auto row = cJSON_GetArrayItem(rows, i);
-+                    if (cJSON_IsString(row)) label += "\n\n" + std::string(row->valuestring).substr(0, 150);
++            const auto* card = cJSON_GetObjectItem(root, "card");
++            if (!cJSON_IsObject(card)) return;
++            const auto bounded = [](const cJSON* value, size_t max) -> std::string {
++                if (!cJSON_IsString(value)) return {};
++                const std::string_view s(value->valuestring);
++                if (s.size() <= max) return std::string(s);
++                while (max && (static_cast<unsigned char>(s[max]) & 0xc0) == 0x80) --max;
++                return std::string(s.substr(0, max));
++            };
++            const auto field = [&bounded](const cJSON* object, const char* key, size_t max) {
++                return bounded(cJSON_GetObjectItemCaseSensitive(object, key), max);
++            };
++            InfoCard content{.kind = field(card, "kind", 16), .title = field(card, "title", 120),
++                             .source = field(card, "source", 48), .hero = field(card, "hero", 16),
++                             .subtitle = field(card, "subtitle", 180)};
++            if (content.title.empty()) return;
++            const auto* items = cJSON_GetObjectItem(card, "items");
++            const auto* rows = cJSON_GetObjectItem(card, "rows");
++            for (int i = 0; i < 12; ++i) {
++                const auto* item = cJSON_GetArrayItem(items, i);
++                if (cJSON_IsObject(item)) {
++                    content.items.push_back({field(item, "title", 160), field(item, "detail", 200), field(item, "badge", 24)});
++                } else if (!cJSON_IsArray(items)) {
++                    const auto legacy = bounded(cJSON_GetArrayItem(rows, i), 200);
++                    if (!legacy.empty()) content.items.push_back({.title = legacy});
 +                }
-+                Schedule([display, label = std::move(label)]() { display->ShowNotification(label.c_str(), 20000); });
 +            }
++            Schedule([display, content = std::move(content)]() { display->ShowInfoCard(content); });
          } else if (strcmp(type->valuestring, "alert") == 0) {
              auto status = cJSON_GetObjectItem(root, "status");
              auto message = cJSON_GetObjectItem(root, "message");
-@@ -609,36 +671,6 @@ void Application::InitializeProtocol() {
+@@ -609,36 +687,6 @@ void Application::InitializeProtocol() {
      protocol_->Start();
  }
  
@@ -205,7 +221,7 @@ index d69d43d..39848a8 100644
  void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
      ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
      auto display = Board::GetInstance().GetDisplay();
-@@ -716,8 +748,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
+@@ -716,8 +764,13 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
          return;
      }
  
@@ -219,7 +235,7 @@ index d69d43d..39848a8 100644
              return;
          }
      }
-@@ -825,8 +862,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+@@ -825,8 +878,13 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
          return;
      }
  
@@ -233,7 +249,7 @@ index d69d43d..39848a8 100644
              audio_service_.EnableWakeWordDetection(true);
              return;
          }
-@@ -914,7 +956,7 @@ void Application::HandleStateChangedEvent() {
+@@ -914,7 +972,7 @@ void Application::HandleStateChangedEvent() {
                  // Only AFE wake word can be detected in speaking mode
                  audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
              }
@@ -242,7 +258,7 @@ index d69d43d..39848a8 100644
              break;
          case kDeviceStateWifiConfiguring:
              audio_service_.EnableVoiceProcessing(false);
-@@ -935,6 +977,7 @@ void Application::Schedule(std::function<void()>&& callback) {
+@@ -935,6 +993,7 @@ void Application::Schedule(std::function<void()>&& callback) {
  }
  
  void Application::AbortSpeaking(AbortReason reason) {
@@ -250,13 +266,22 @@ index d69d43d..39848a8 100644
      ESP_LOGI(TAG, "Abort speaking");
      aborted_ = true;
      if (protocol_) {
-@@ -1116,4 +1159,3 @@ void Application::ResetProtocol() {
+@@ -1058,7 +1117,7 @@ bool Application::CanEnterSleepMode() {
+         return false;
+     }
+ 
+-    if (!audio_service_.IsIdle()) {
++    if (!audio_service_.IsIdle() || tools::has_active_timer()) {
+         return false;
+     }
+ 
+@@ -1116,4 +1175,3 @@ void Application::ResetProtocol() {
          protocol_.reset();
      });
  }
 -
 diff --git a/main/application.h b/main/application.h
-index 7ca7af4..9dda043 100644
+index 7ca7af4fac4d01ca190d2f2d710f6f4aee64ac4c..9dda04338197cd8e2507a16bc8510adaaadc597e 100644
 --- a/main/application.h
 +++ b/main/application.h
 @@ -1,3 +1,4 @@
@@ -295,7 +320,7 @@ index 7ca7af4..9dda043 100644
      ListeningMode GetDefaultListeningMode() const;
      
 diff --git a/main/assets.cc b/main/assets.cc
-index ad61944..6b84daf 100644
+index ad6194422fc79bd8a568873d57ee83ba1aa79b37..6b84daf55a11421f9fb2923dd409396c2e3aafc1 100644
 --- a/main/assets.cc
 +++ b/main/assets.cc
 @@ -3,8 +3,8 @@
@@ -449,7 +474,7 @@ index ad61944..6b84daf 100644
  bool Assets::Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback) {
      ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 diff --git a/main/assets.h b/main/assets.h
-index 3692e0c..7bfbc5c 100644
+index 3692e0c7292f22f585a6848d95235e0573394af7..7bfbc5caac716fab33fd63ff64d5f56bb4714bdb 100644
 --- a/main/assets.h
 +++ b/main/assets.h
 @@ -68,13 +68,13 @@ private:
@@ -474,7 +499,7 @@ index 3692e0c..7bfbc5c 100644
      // Strategy instance
      std::unique_ptr<AssetStrategy> strategy_;
 diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
-index 350ac58..476af30 100644
+index 350ac58672d357cb48497446360afb0b6e761470..476af309ef6e51903bed24a8bf6b70fb789ff907 100644
 --- a/main/audio/audio_service.cc
 +++ b/main/audio/audio_service.cc
 @@ -159,11 +159,14 @@ void AudioService::Start() {
@@ -494,7 +519,7 @@ index 350ac58..476af30 100644
  
  void AudioService::Stop() {
 diff --git a/main/boards/common/i2c_device.cc b/main/boards/common/i2c_device.cc
-index 835997d..ea50d51 100644
+index 835997d174cad52305486a91464494914baad5ca..ea50d51e317611ded3dd17eba428007e90f26590 100644
 --- a/main/boards/common/i2c_device.cc
 +++ b/main/boards/common/i2c_device.cc
 @@ -32,4 +32,8 @@ uint8_t I2cDevice::ReadReg(uint8_t reg) {
@@ -508,7 +533,7 @@ index 835997d..ea50d51 100644
  }
 \ No newline at end of file
 diff --git a/main/boards/common/i2c_device.h b/main/boards/common/i2c_device.h
-index 7bc917b..874b137 100644
+index 7bc917bf2f094f64d653a355acc361bef9a69a00..874b1377a7107dcac89e8e3c026c49985eb5078c 100644
 --- a/main/boards/common/i2c_device.h
 +++ b/main/boards/common/i2c_device.h
 @@ -13,6 +13,7 @@ protected:
@@ -520,7 +545,7 @@ index 7bc917b..874b137 100644
  
  #endif // I2C_DEVICE_H
 diff --git a/main/boards/common/wifi_board.cc b/main/boards/common/wifi_board.cc
-index 377685b..abbcde1 100644
+index 377685ba7e6bf33549a76265f1784eec0e6b8b17..abbcde1d5252e75633360f83eb6fb1cbd61fe79b 100644
 --- a/main/boards/common/wifi_board.cc
 +++ b/main/boards/common/wifi_board.cc
 @@ -339,6 +339,8 @@ std::string WifiBoard::GetDeviceStatusJson() {
@@ -533,7 +558,7 @@ index 377685b..abbcde1 100644
  
      // Chip temperature
 diff --git a/main/boards/common/wifi_board.h b/main/boards/common/wifi_board.h
-index 7ee973c..8de99db 100644
+index 7ee973c4b812db093a5b51823bd6545bd987f78b..8de99dbe163e60dd72fe6b942ded3906e4331698 100644
 --- a/main/boards/common/wifi_board.h
 +++ b/main/boards/common/wifi_board.h
 @@ -29,7 +29,7 @@ protected:
@@ -545,8 +570,73 @@ index 7ee973c..8de99db 100644
  
      /**
       * WiFi connection timeout callback
+diff --git a/main/display/display.cc b/main/display/display.cc
+index 50fc1c528adaa0cb482dffa9e5382c02bd427566..806c6b43ee43323f4be7a178a03c69abe77aa372 100644
+--- a/main/display/display.cc
++++ b/main/display/display.cc
+@@ -32,6 +32,15 @@ void Display::ShowNotification(const char* notification, int duration_ms) {
+     ESP_LOGW(TAG, "ShowNotification: %s", notification);
+ }
+ 
++void Display::ShowInfoCard(const InfoCard& card) {
++    auto label = card.title;
++    if (!card.subtitle.empty()) label += "\n" + card.subtitle;
++    for (const auto& row : card.items) {
++        label += "\n" + row.badge + (row.badge.empty() ? "" : "  ") + row.title;
++    }
++    ShowNotification(label, 30000);
++}
++
+ void Display::UpdateStatusBar(bool update_all) {
+ }
+ 
+diff --git a/main/display/display.h b/main/display/display.h
+index 9e73014e6771bb5f6f4c6e49ed478576b8b452b5..2f3956ef8167648eb5d8d36f8cb987939842441a 100644
+--- a/main/display/display.h
++++ b/main/display/display.h
+@@ -2,6 +2,7 @@
+ #define DISPLAY_H
+ 
+ #include "emoji_collection.h"
++#include "info_card.h"
+ 
+ #ifndef CONFIG_USE_EMOTE_MESSAGE_STYLE
+ #define HAVE_LVGL 1
+@@ -33,6 +34,7 @@ public:
+     virtual void SetStatus(const char* status);
+     virtual void ShowNotification(const char* notification, int duration_ms = 3000);
+     virtual void ShowNotification(const std::string &notification, int duration_ms = 3000);
++    virtual void ShowInfoCard(const InfoCard& card);
+     virtual void SetEmotion(const char* emotion);
+     virtual void SetChatMessage(const char* role, const char* content);
+     virtual void ClearChatMessages();
+diff --git a/main/display/info_card.h b/main/display/info_card.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..39e28e5bfc24dbbd5ed747e6458019bb7586e728
+--- /dev/null
++++ b/main/display/info_card.h
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include <string>
++#include <vector>
++
++struct InfoCardItem {
++    std::string title;
++    std::string detail;
++    std::string badge;
++};
++
++struct InfoCard {
++    std::string kind;
++    std::string title;
++    std::string source;
++    std::string hero;
++    std::string subtitle;
++    std::vector<InfoCardItem> items;
++};
 diff --git a/main/ota.cc b/main/ota.cc
-index bcc0dc5..e6792e3 100644
+index bcc0dc552377527acd26e59cdb2adff6940b3605..e6792e39904eb47a9898a02851c6a22e39f5b075 100644
 --- a/main/ota.cc
 +++ b/main/ota.cc
 @@ -119,19 +119,13 @@ esp_err_t Ota::CheckVersion() {
@@ -574,7 +664,7 @@ index bcc0dc5..e6792e3 100644
          if (cJSON_IsString(challenge)) {
              activation_challenge_ = challenge->valuestring;
 diff --git a/main/ota.h b/main/ota.h
-index 1e5d687..dbcc91d 100644
+index 1e5d68785ef99cbb25afa05f773ac6df97b14237..dbcc91d2883b4bf1b94956a0a3ad3227b4cc496d 100644
 --- a/main/ota.h
 +++ b/main/ota.h
 @@ -18,7 +18,7 @@ public:

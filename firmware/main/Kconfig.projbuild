@@ -11,6 +11,14 @@ config STACKCHAN_SERVER_URL
 
 endmenu
 
+config STACKCHAN_XIAOMI_SENSOR_ADDRESS
+    string "Xiaomi LYWSD03MMC Bluetooth address"
+    default ""
+    help
+        Public Bluetooth address of the indoor thermometer, for example
+        AA:BB:CC:DD:EE:FF. Leave empty to disable the indoor climate tool.
+        Set the address in the local sdkconfig overlay.
+
 menu "StackChan Skin"
 
 config STACKCHAN_SKIN_SAOIRSE

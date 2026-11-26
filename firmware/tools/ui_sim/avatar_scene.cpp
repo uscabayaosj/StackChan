@@ -359,24 +359,40 @@ void AvatarScene::setStatus(const char* status)
         return;
     }
 
-    current_status_ = status;
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) {
+        return;
+    }
+    auto& avatar = stackchan.avatar();
+    if (std::strcmp(status, "photo_shutter") == 0) {
+        avatar.playPhotoShutter();
+        return;
+    }
 
+    current_status_ = status;
     if (std::strcmp(status, "speaking") == 0 || std::strcmp(status, "SPEAKING") == 0) {
+        avatar.setConversationActivity(ConversationActivity::Talking);
         setSpeaking(true);
         if (status_dot_ != nullptr) {
             lv_obj_set_style_bg_color(status_dot_, lv_color_hex(0x35D07F), LV_PART_MAIN);
         }
     } else if (std::strcmp(status, "listening") == 0 || std::strcmp(status, "LISTENING") == 0) {
+        avatar.setConversationActivity(ConversationActivity::Listening);
         setSpeaking(false);
         if (status_dot_ != nullptr) {
             lv_obj_set_style_bg_color(status_dot_, lv_color_hex(0x3D8BFF), LV_PART_MAIN);
         }
     } else if (std::strcmp(status, "standby") == 0 || std::strcmp(status, "STANDBY") == 0) {
+        avatar.setConversationActivity(ConversationActivity::Idle);
         setSpeaking(false);
         if (status_dot_ != nullptr) {
             lv_obj_set_style_bg_color(status_dot_, lv_color_hex(0x666666), LV_PART_MAIN);
         }
+    } else if (std::strcmp(status, "thinking") == 0) {
+        avatar.setConversationActivity(ConversationActivity::Thinking);
+        setSpeaking(false);
     } else {
+        avatar.setConversationActivity(ConversationActivity::Idle);
         setSpeaking(false);
         setChatMessage("system", status);
         if (status_dot_ != nullptr) {

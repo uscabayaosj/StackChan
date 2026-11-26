@@ -3,20 +3,22 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config } from './config.js';
 import { createCodec, type OpusCodec } from './opus.js';
 import { transcribe } from './stt.js';
-import { streamChatEventsWithFallback, type ChatMessage } from './llm.js';
+import { streamChatEventsWithFallback } from './llm.js';
 import { synthesizeToFrames } from './tts.js';
 import { handleVision } from './vision.js';
 import { createServerTools } from './server_tools.js';
 import { bearerMatches, secretMatches } from './auth.js';
-import { Session, type SessionDeps, type SessionSocket } from './session.js';
+import { Session, type ConversationMessage, type SessionDeps, type SessionSocket } from './session.js';
 import { callWithDeadline, streamWithDeadline } from './deadline.js';
 import { buildOtaResponse, deviceVersionFromBody } from './ota.js';
+import { ICloudCalendar } from './icloud_calendar.js';
+import { ICloudDav } from './icloud_dav.js';
 
 /** Conversation history per device id, bounded: oldest-inserted device is evicted first. */
 const MAX_HISTORIES = 32;
-const histories = new Map<string, ChatMessage[]>();
+const histories = new Map<string, ConversationMessage[]>();
 
-function historyFor(deviceId: string): ChatMessage[] {
+function historyFor(deviceId: string): ConversationMessage[] {
   let h = histories.get(deviceId);
   if (h) {
     // Refresh recency so an active device is never the eviction victim.
@@ -47,6 +49,7 @@ export function createDeps(cfg: Config, codec: OpusCodec = createCodec(), fetchI
     config: cfg,
     codec,
     serverTools: createServerTools(cfg, fetchImpl),
+    calendar: cfg.iCloudCalendar ? new ICloudCalendar(new ICloudDav(cfg.iCloudCalendar, fetchImpl), cfg.deviceTz, cfg.iCloudCalendar.name) : undefined,
     transcribe: (pcm, signal) =>
       callWithDeadline('STT', cfg.sttTimeoutMs, signal, s => transcribe(cfg.elevenlabs, pcm, fetchImpl, { signal: s })),
     chat: (messages, signal, tools) =>

@@ -127,9 +127,9 @@ describe('tool rounds', () => {
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await withTools(env, s, () => ok);
     utter(s, env); await s.drain();
-    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Fine.', 'A cat.', 'Obviously.']);
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Let me look.', 'A cat.', 'Obviously.']);
     expect(env.sent.filter(m => m.type === 'llm').map(m => m.emotion)).toEqual(['neutral', 'happy']);
-    expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'Fine. A cat. Obviously.' });
+    expect(s.history.at(-1)).toEqual({ role: 'assistant', content: 'A cat. Obviously.' });
   });
 
   it('does not run tools on the last round: it just says it is going in circles', async () => {
@@ -141,7 +141,7 @@ describe('tool rounds', () => {
     utter(s, env); await s.drain();
     expect(n).toBe(MAX_TOOL_ROUNDS);
     expect(env.sent.filter(m => m.type === 'mcp' && m.payload.method === 'tools/call')).toHaveLength(MAX_TOOL_ROUNDS - 1);
-    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual(['Let me look.', LOOP_FILLER]);
+    expect(env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text)).toEqual([...Array(MAX_TOOL_ROUNDS - 1).fill('Let me look.'), LOOP_FILLER]);
   });
 
   it('arguments that are valid JSON but not an object are rejected without calling the robot', async () => {

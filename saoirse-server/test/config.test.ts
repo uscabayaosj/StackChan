@@ -89,6 +89,14 @@ describe('loadConfig', () => {
   it('allows an empty OTA secret locally (check off)', () => {
     expect(loadConfig(base).otaSecret).toBe('');
   });
+  it('enables iCloud only for a named calendar with account credentials and protected robot endpoints', () => {
+    const env = { ...base, ICLOUD_CALENDAR_ACCOUNT: 'user@example.com', ICLOUD_CALENDAR_APP_PASSWORD: 'example' };
+    expect(loadConfig(env).iCloudCalendar).toBeUndefined();
+    const enabled = { ...env, ICLOUD_CALENDAR_NAME: 'Test Calendar' };
+    expect(() => loadConfig(enabled)).toThrow(/OTA_SECRET/);
+    expect(loadConfig({ ...enabled, OTA_SECRET: 's' }).iCloudCalendar?.name).toBe('Test Calendar');
+    expect(() => loadConfig({ ...enabled, OTA_SECRET: 's', ICLOUD_CALENDAR_APP_PASSWORD: '' })).toThrow(/ICLOUD_CALENDAR_APP_PASSWORD/);
+  });
   it('allows an empty device token locally (auth off)', () => {
     expect(loadConfig({ ...base, SAOIRSE_DEVICE_TOKEN: '' }).deviceToken).toBe('');
   });

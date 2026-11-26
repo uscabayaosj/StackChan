@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" width="320" height="240">
   <!-- Saoirse face (approved 2026-10-27). Groups are toggled by render_face.py. -->
   <g id="static">
-    <rect width="320" height="240" fill="#EFE6DA"/>
-    <ellipse cx="160" cy="262" rx="150" ry="70" fill="#FBF7F0"/>
+    <rect width="320" height="240" fill="#000000"/>
     <path d="M42 96 L58 10 L128 62 Q90 96 42 96 Z" fill="#4A3C36"/>
     <path d="M56 86 L66 32 L112 66 Q86 86 56 86 Z" fill="#E9D9CB"/>
     <path d="M278 96 L262 10 L192 62 Q230 96 278 96 Z" fill="#4A3C36"/>
@@ -26,8 +25,6 @@
     <ellipse cx="153" cy="178" rx="17" ry="13" fill="#1C1614"/>
     <ellipse cx="137" cy="171" rx="7" ry="5" fill="#D8A05C"/>
     <path d="M146 176 q7 -5 14 0 q-3 7 -7 7 q-4 0 -7 -7 z" fill="#4A3C38"/>
-    <path d="M70 228 Q160 214 250 228 L250 240 L70 240 Z" fill="#F2A7BF"/>
-    <circle cx="160" cy="231" r="9" fill="#E8CFE3"/><line x1="152" y1="233" x2="168" y2="233" stroke="#9C7F96" stroke-width="2"/>
   </g>
   <g id="eyes">
     <circle cx="104" cy="142" r="31" fill="#3A302C"/><circle cx="186" cy="142" r="31" fill="#3A302C"/>

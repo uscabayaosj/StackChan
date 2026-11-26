@@ -168,6 +168,10 @@ int gatt_svr_init(bool use_alt_uuid);
 
 void ble_prph_init(bool use_alt_uuid);
 
+/* Keep the shared host available while a thermometer read is in progress. */
+int stackchan_ble_acquire_central(void);
+void stackchan_ble_release_central(void);
+
 #ifdef __cplusplus
 }
 #endif

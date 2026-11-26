@@ -1,4 +1,4 @@
-import { parseBusRequest } from './transport_request.js';
+import { parseBusRequest, parseRailRequest } from './transport_request.js';
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import { FRAME_MS, OUTPUT_SAMPLE_RATE, OUT_FRAME_BYTES, rms, type OpusCodec } from './opus.js';
@@ -10,6 +10,9 @@ import type { ChatMessage, ChatEvent, ToolCall, ToolSpec } from './llm.js';
 import { DeviceMcp } from './mcp.js';
 import { callWithDeadline } from './deadline.js';
 import type { ServerTool } from './server_tools.js';
+import { CalendarConversation } from './calendar_conversation.js';
+import type { CalendarChange, ICloudCalendar } from './icloud_calendar.js';
+import { makeLiveCard, type LiveCard, type LiveCardItem } from './live_cards.js';
 
 export interface SessionSocket {
   sendText(json: object): void;
@@ -33,6 +36,38 @@ export interface SessionDeps {
   timers?: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (h: unknown) => void };
   /** Tools that run on the server (weather, web search), offered alongside the robot's. */
   serverTools?: ServerTool[];
+  calendar?: Pick<ICloudCalendar, 'list' | 'prepare'>;
+}
+
+type LiveLookup = {
+  name: 'get_weather' | 'get_london_departures';
+  outcome: 'returned' | 'failed' | 'returned no board or forecast';
+  source?: 'Open-Meteo' | 'TfL' | 'National Rail';
+};
+
+// These facts travel with the user turn in the device's bounded conversation history.
+export type ConversationMessage = ChatMessage & { liveLookups?: LiveLookup[] };
+
+function liveLookupAnswer(question: string, history: ConversationMessage[]): string | undefined {
+  const words = question.trim().replace(/[.?!]+$/, '');
+  const asksAboutTool = /^(?:did you (?:actually |really )?(?:use (?:a |the |any )?tool|call (?:a |the |any )?tool|make (?:a |the |any )?tool call)|(?:which|what) (?:tool|source) did you (?:use|call)|where did you get)(?:\s+[^.!?]+)?$/i.test(words);
+  if (!asksAboutTool) return;
+  const weather = /\b(?:weather|forecast)\b/i.test(words);
+  const rail = /\b(?:train|rail|waterloo)\b/i.test(words);
+  const tfl = /\b(?:bus|tube|underground|tfl)\b/i.test(words);
+  const transport = rail || tfl || /\b(?:departures?|arrivals?)\b/i.test(words);
+  if (weather && transport) return;
+
+  const previous = history.filter(message => message.role === 'user').at(-2);
+  const lookups = previous?.liveLookups ?? [];
+  const lookup = [...lookups].reverse().find(entry => weather ? entry.name === 'get_weather'
+    : !transport || entry.name === 'get_london_departures' && !(rail && entry.source === 'TfL') && !(tfl && entry.source === 'National Rail'));
+  if (!lookup) return;
+  const isWeather = lookup.name === 'get_weather';
+  const label = isWeather ? 'weather' : 'departure';
+  if (lookup.outcome === 'failed') return `I tried the ${label} lookup, but it failed.`;
+  if (!lookup.source) return `I used the ${label} lookup, but it returned no usable data.`;
+  return `Yes, I checked ${lookup.source} for that ${isWeather ? 'forecast' : 'departure information'}.`;
 }
 
 type ToolResult = { id: string; text: string; summary?: string };
@@ -57,17 +92,28 @@ export const TTS_STOP_MARGIN_MS = 500;
 /** How many LLM rounds a turn may take (each tool round is one more LLM call). */
 export const MAX_TOOL_ROUNDS = 4;
 const DEVICE_WRITES = new Set(['self.robot.set_head_angles', 'self.robot.set_led_color',
-  'self.robot.create_reminder', 'self.robot.stop_reminder', 'self.audio_speaker.set_volume',
+  'self.robot.create_reminder', 'self.robot.start_timer', 'self.robot.stop_reminder', 'self.audio_speaker.set_volume',
   'self.screen.set_brightness', 'self.screen.set_theme']);
 const WRITE_REQUESTS: Record<string, RegExp> = {
   'self.robot.set_led_color': /\b(?:lights?|leds?|light bars?)\b/i,
-  'self.robot.create_reminder': /\b(?:remind|set (?:a |the )?(?:timer|reminder))\b/i,
+  'self.robot.create_reminder': /\b(?:remind|set (?:a |the )?reminder)\b/i,
   'self.robot.stop_reminder': /\b(?:cancel|stop|remove|delete)\b.*\b(?:timer|reminder)\b/i,
   'self.audio_speaker.set_volume': /\b(?:louder|quieter|mute|unmute|turn (?:it|your voice) (?:up|down)|(?:set|increase|decrease|raise|lower).*volume)\b/i,
   'self.screen.set_brightness': /\b(?:brightness|brighter|dim|dimmer)\b/i,
   'self.screen.set_theme': /\b(?:theme|dark mode|light mode)\b/i,
 };
 const UNTRUSTED_READS = new Set(['self.camera.take_photo', 'web_search', 'get_london_departures', 'self.robot.get_reminders']);
+const TIMER_REQUEST = /\b(?:set|start|add|create|give me|make me|run)\b[^.!?]{0,45}\b(?:timer|countdown)\b|^(?:a\s+)?(?:\w+[- ]+(?:seconds?|minutes?|hours?)\s+timer|timer (?:for\s+)?\w+)\b/i;
+const TIMER_NEGATION = /\b(?:don['’]t|do not|never|cancel|stop)\b[^.!?]{0,45}\b(?:timer|countdown)\b/i;
+
+function dueLabel(remaining: unknown): string | undefined {
+  if (typeof remaining !== 'number' || !Number.isFinite(remaining) || remaining < 0) return undefined;
+  const seconds = Math.ceil(remaining / 1000);
+  if (seconds === 0) return 'Due now';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 export const CAMERA_TOOL = 'self.camera.take_photo';
 /** Spoken before a photo when the model said nothing first, so the robot is not silent for the capture. */
 export const CAMERA_FILLER = 'Let me look.';
@@ -102,7 +148,7 @@ function stripTag(text: string): string {
 }
 
 export class Session {
-  readonly history: ChatMessage[];
+  readonly history: ConversationMessage[];
   private state: State = 'idle';
   private sessionId = randomUUID();
   /** Listening mode the device asked for; informational (logged), capture logic is the same. */
@@ -122,6 +168,7 @@ export class Session {
   /** Loudest frame of the utterance being captured, for the log. */
   private utterPeakRms = 0;
   private lastTransport?: Record<string, unknown>;
+  private readonly calendar?: CalendarConversation;
   private inputFrames = 0;
   private guardedFrames = 0;
   private rejectedSpeech = 0;
@@ -153,9 +200,12 @@ export class Session {
     private readonly socket: SessionSocket,
     private readonly deps: SessionDeps,
     readonly deviceId: string,
-    history: ChatMessage[] = [],
+    history: ConversationMessage[] = [],
   ) {
     this.history = history;
+    if (deps.calendar) this.calendar = new CalendarConversation(
+      deps.calendar, deps.config.deviceTz, deps.config.toolTimeoutMs.other, deps.config.iCloudCalendar?.name,
+    );
     const v = deps.config.vad;
     this.vad = new EnergyVad({ rmsThreshold: v.rmsThreshold, silenceMs: v.silenceMs, minSpeechMs: v.minSpeechMs, frameMs: FRAME_MS });
     this.lastSpeechAt = deps.now();
@@ -339,20 +389,18 @@ export class Session {
     if (this.abortRequested || !this.socket.isOpen) return;
     const heard = `utterance ${stats.ms} ms, peak rms ${stats.peak.toFixed(3)}`;
     if (!text) { this.deps.log(`${heard}: empty transcript`); return; }
-    this.deps.log(!this.deps.config.logConversation ? heard : `${heard}: "${text}"`);
+    const now = this.deps.now();
+    let calendar = this.calendar?.accepts(text, now) ? this.calendar : undefined;
+    this.deps.log(calendar || !this.deps.config.logConversation ? heard : `${heard}: "${text}"`);
     this.socket.sendText({ session_id: this.sessionId, type: 'stt', text });
-    this.history.push({ role: 'user', content: text });
-    this.trimHistory();
-
     const definitionRequest = /\b(?:define|definition of|meaning of|what (?:does|do|did)\b[^?]*\bmean)\b/i.test(text);
-    const transport = parseBusRequest(text, this.lastTransport);
-    let busReply = Boolean(transport) || /\b(?:bus|buses)\b/i.test(text) ||
+    const transport = parseRailRequest(text) ?? parseBusRequest(text, this.lastTransport);
+    let busReply = transport?.mode === 'bus' || /\b(?:bus|buses)\b/i.test(text) ||
       (this.lastTransport?.mode === 'bus' && /^(?:(?:and|what about|how about)\s+)?(?:next\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)\b/i.test(text.trim()));
 
     const localTime = formatLocalTime(new Date(this.deps.now()), this.deps.config.deviceTz);
     const { hour, minute } = localHourMinute(new Date(this.deps.now()), this.deps.config.deviceTz);
     const system = `${SYSTEM_PROMPT}\nRobot tools currently available: ${this.mcp.tools.map(tool => tool.name).join(', ') || 'none confirmed yet'}.\n\nCurrent local time: ${localTime} (say it as: ${spokenTime(hour, minute)})`;
-    const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.history];
     const acc = new SentenceAccumulator();
     let emotionSent = false;
     let ttsStarted = false;
@@ -414,15 +462,53 @@ export class Session {
     };
 
     let replyRoute = 'model';
+    let userMessage: ConversationMessage | undefined;
+    const liveLookups: LiveLookup[] = [];
+    let calendarChange: CalendarChange | undefined;
     try {
-      const working: ChatMessage[] = [...messages];
+      if (calendar) {
+        const reply = await calendar.respond(text, now, signal, this.deps.chat);
+        if (this.abortRequested) return;
+        if (reply) {
+          replyRoute = 'iCloud Calendar';
+          this.lastTransport = undefined;
+          busReply = false;
+          if (reply.card) this.sendCard(reply.card);
+          sendEmotion();
+          for (const line of reply.lines) await speak(line);
+          calendarChange = reply.change;
+          completed = !this.abortRequested;
+          return;
+        }
+        calendar = undefined;
+      }
+      userMessage = { role: 'user', content: text };
+      this.history.push(userMessage);
+      this.trimHistory();
+      const lookupAnswer = liveLookupAnswer(text, this.history);
+      if (lookupAnswer) {
+        replyRoute = 'lookup history';
+        full = lookupAnswer;
+        sendEmotion();
+        await speak(full);
+        completed = !this.abortRequested;
+        return;
+      }
+      const lookupHistory = this.history.filter(message => message.role === 'user').flatMap((message, index) =>
+        message.liveLookups?.map(({ name, outcome, source }) =>
+          `User message ${index + 1}: ${name} ${outcome}${source ? ` data from ${source}` : ''}.`) ?? []);
+      const lookupContext = lookupHistory.length ? `\n\nPast live lookup record (numbered by user message in this conversation context):\n${lookupHistory.join('\n')}` : '';
+      const working: ChatMessage[] = [
+        { role: 'system', content: system + lookupContext },
+        ...this.history.map(({ liveLookups: _liveLookups, ...message }) => message),
+      ];
       let calls: ToolCall[] | null = null;
       if (transport && this.deps.serverTools?.some(t => t.spec.function.name === 'get_london_departures')) {
-        const call = { id: 'bus', name: 'get_london_departures', arguments: JSON.stringify(transport) };
-        const [result] = await this.runTools([call], signal, { writesAllowed: false, cameraAvailable: false });
+        const call = { id: transport.mode === 'rail' ? 'rail' : 'bus', name: 'get_london_departures', arguments: JSON.stringify(transport) };
+        const [result] = await this.runTools([call], signal, { writesAllowed: false, cameraAvailable: false, liveLookups });
         if (this.abortRequested) return;
         if (result.summary) {
-          replyRoute = 'direct TfL';
+          replyRoute = transport.mode === 'rail' ? 'direct National Rail' : 'direct TfL';
           full = result.summary;
           sendEmotion();
           await speak(full);
@@ -440,7 +526,7 @@ export class Session {
           { id: 'brief_weather', name: 'get_weather', arguments: '{"days":1}' },
           { id: 'brief_reminders', name: 'self.robot.get_reminders', arguments: '{}' },
         ];
-        const results = await this.runTools(checks, signal, { writesAllowed: false, cameraAvailable: false });
+        const results = await this.runTools(checks, signal, { writesAllowed: false, cameraAvailable: false, hideReminders: true, liveLookups });
         working.push({ role: 'assistant', content: null, tool_calls: checks.map(call => ({
           id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments },
         })) });
@@ -451,6 +537,14 @@ export class Session {
       const moveRequested = /\b(?:turn|move|look)\b[^.!?]{0,45}\b(?:left|right|up|down|straight ahead)\b/i.test(text);
       const permitted = new Set(Object.entries(WRITE_REQUESTS)
         .filter(([, pattern]) => pattern.test(text)).map(([name]) => name));
+      if (TIMER_REQUEST.test(text) && !TIMER_NEGATION.test(text)) {
+        if (this.mcp.has('self.robot.start_timer')) {
+          permitted.delete('self.robot.create_reminder');
+          permitted.add('self.robot.start_timer');
+        } else {
+          permitted.add('self.robot.create_reminder');
+        }
+      }
       if (moveRequested && (!visionRequest || cameraAvailable)) permitted.add('self.robot.set_head_angles');
       let writesAllowed = !briefing;
       for (let round = 1; round <= MAX_TOOL_ROUNDS && !this.abortRequested; round++) {
@@ -458,7 +552,9 @@ export class Session {
         const tools = [...(this.deps.serverTools ?? []).map(t => t.spec), ...this.mcp.toolSpecs()]
           .filter(tool => !transport || tool.function.name !== 'get_london_departures')
           .filter(tool => (!DEVICE_WRITES.has(tool.function.name) || writesAllowed && permitted.has(tool.function.name)));
+        const holdForCamera = tools.some(tool => tool.function.name === CAMERA_TOOL);
         const holdForDefinition = definitionRequest && tools.some(tool => tool.function.name === 'show_word_definition');
+        const holdText = holdForCamera || holdForDefinition;
         let roundText = '';
         // Later rounds may start with their own emotion tag (the persona asks for one per reply): it updates
         // the face and is never spoken. The tag can be split across chunks, so hold text until it is decided.
@@ -483,24 +579,23 @@ export class Session {
             if (!text) continue;
           }
           roundText += text;
-          // A board or definition card can supply the spoken summary. Hold any preamble until we know
-          // whether the model is calling a tool or answering without one.
-          if (!busReply && !holdForDefinition) await handleChunk(text);
+          // A camera call has a fixed announcement and a bus tool can supply its own summary.
+          if (!busReply && !holdText) await handleChunk(text);
         }
         if (this.abortRequested) break;
         if (!calls) {
-          if (busReply || holdForDefinition) await handleChunk(roundText);
+          if (busReply || holdText) await handleChunk(roundText);
           break;
         }
         if (briefing) break;
         // Nothing to feed the results back into: don't run the robot for a reply that cannot follow.
         if (round === MAX_TOOL_ROUNDS) break;
+        const cameraCall = calls.some(call => call.name === CAMERA_TOOL);
         const definitionCall = calls.some(call => call.name === 'show_word_definition');
-        if (holdForDefinition && !definitionCall && !busReply) await handleChunk(roundText);
-        // A photo gets a filler if the model said nothing before its tool call.
+        const suppressPreamble = cameraCall || definitionCall || (holdForCamera && visionRequest);
+        if (!suppressPreamble && holdText && !busReply) await handleChunk(roundText);
         await flushText();
-        if (!/\s$/.test(full)) full += ' ';
-        if (calls.some(c => c.name === CAMERA_TOOL) && spoken.length === 0) await speak(CAMERA_FILLER);
+        if (full && !/\s$/.test(full)) full += ' ';
         // Keep the robot in its speaking state through the tool round (silent frames, see TOOL_KEEPALIVE_MS).
         let keepAlive: unknown = null;
         const tick = () => {
@@ -516,7 +611,14 @@ export class Session {
         try {
           results = await this.runTools(calls, signal, {
             writesAllowed, cameraAvailable: cameraAvailable || this.mcp.has(CAMERA_TOOL),
-            permitted,
+            permitted, liveLookups,
+            hideReminders: permitted.has('self.robot.stop_reminder') || permitted.has('self.robot.start_timer'),
+            beforePhoto: async () => {
+              if (!this.abortRequested && !emotionSent && this.socket.isOpen) sendEmotion();
+              await speak(CAMERA_FILLER);
+              const remaining = playEnd + TTS_STOP_MARGIN_MS - this.deps.now();
+              if (remaining > 0 && !signal.aborted) await this.deps.sleep(remaining);
+            },
           });
           if (calls.some(call => UNTRUSTED_READS.has(call.name))) writesAllowed = false;
         } finally {
@@ -534,7 +636,7 @@ export class Session {
           break;
         }
         working.push({
-          role: 'assistant', content: definitionCall ? null : stripTag(roundText).trim() || null,
+          role: 'assistant', content: suppressPreamble ? null : stripTag(roundText).trim() || null,
           tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
         });
         for (const r of results) working.push({ role: 'tool', tool_call_id: r.id, content: r.text });
@@ -546,11 +648,13 @@ export class Session {
         completed = !this.abortRequested;
       }
     } catch (err) {
+      if (calendar && this.abortRequested) return;
+      if (calendar) this.deps.log('iCloud Calendar reply failed');
       if (!ttsStarted && !this.abortRequested && this.socket.isOpen) {
-        this.deps.log(`reply failed before speech: ${(err as Error).message}`);
+        if (!calendar) this.deps.log(`reply failed before speech: ${(err as Error).message}`);
         this.socket.sendText({ session_id: this.sessionId, type: 'llm', emotion: 'neutral', text: '' });
         await speak("I couldn't finish that reply. Could you ask me again?");
-      } else {
+      } else if (!calendar) {
         throw err;
       }
     } finally {
@@ -571,14 +675,27 @@ export class Session {
       }
       // A finished reply is stored whole; an aborted or failed one only as far as it was spoken.
       const reply = completed && !busReply ? full.trim() : spoken.join(' ');
-      if (reply) this.history.push({ role: 'assistant', content: reply });
+      if (calendarChange && completed && !this.abortRequested && this.socket.isOpen) calendar?.stage(calendarChange, this.deps.now());
+      if (userMessage && liveLookups.length) userMessage.liveLookups = liveLookups;
+      if (reply && !calendar) this.history.push({ role: 'assistant', content: reply });
       this.trimHistory();
       this.lastSpeechAt = this.deps.now();
     }
   }
 
+  private sendCard(card: LiveCard): void {
+    if (this.socket.isOpen) this.socket.sendText({ type: 'info_card', session_id: this.sessionId, card });
+  }
+
   /** Runs the model's tool calls on the robot, in order; every failure becomes an `Error: …` tool result. */
-  private async runTools(calls: ToolCall[], signal: AbortSignal, policy: { writesAllowed: boolean; cameraAvailable: boolean; permitted?: Set<string> }): Promise<ToolResult[]> {
+  private async runTools(calls: ToolCall[], signal: AbortSignal, policy: {
+    writesAllowed: boolean;
+    cameraAvailable: boolean;
+    permitted?: Set<string>;
+    hideReminders?: boolean;
+    liveLookups: LiveLookup[];
+    beforePhoto?: () => Promise<void>;
+  }): Promise<ToolResult[]> {
     const out: ToolResult[] = [];
     let writesAllowed = policy.writesAllowed;
     let movementFailed = false;
@@ -592,33 +709,54 @@ export class Session {
       let args: Record<string, unknown> = {};
       try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {}; } catch { out.push({ id: call.id, text: 'Error: tool arguments were not valid JSON' }); continue; }
       if (!args || typeof args !== 'object' || Array.isArray(args)) { out.push({ id: call.id, text: 'Error: tool arguments must be a JSON object' }); continue; }
+      if (call.name === 'self.robot.start_timer' && (typeof args.duration_seconds !== 'number' ||
+          !Number.isInteger(args.duration_seconds) || args.duration_seconds < 1 || args.duration_seconds > 86400)) {
+        out.push({ id: call.id, text: 'Error: provide a timer duration from 1 second to 24 hours.' });
+        continue;
+      }
       const isCamera = call.name === CAMERA_TOOL;
       const serverTool = this.deps.serverTools?.find(t => t.spec.function.name === call.name);
       const timeoutMs = serverTool ? serverTool.timeoutMs : isCamera ? this.deps.config.toolTimeoutMs.camera : this.deps.config.toolTimeoutMs.other;
       let text: string;
       let summary: string | undefined;
+      let lookupStarted = false;
+      let lookupSource: LiveLookup['source'];
       try {
         if (serverTool) {
-          text = await callWithDeadline(call.name, timeoutMs, signal, s => serverTool.run(args, s, (card, spokenSummary) => {
-            if (!s.aborted) {
+          text = await callWithDeadline(call.name, timeoutMs, signal, s => {
+            lookupStarted = true;
+            return serverTool.run(args, s, (card, spokenSummary) => {
+              if (s.aborted) return;
               summary = spokenSummary;
               if (call.name === 'get_london_departures') this.lastTransport = args;
-            }
-            if (!s.aborted && this.socket.isOpen) this.socket.sendText({ type: 'info_card', session_id: this.sessionId, card });
-          }));
+              if (card.source === 'Open-Meteo' || card.source === 'TfL' || card.source === 'National Rail') lookupSource = card.source;
+              this.sendCard(card);
+            });
+          });
         } else if (!this.mcp.has(call.name) || (isCamera && !policy.cameraAvailable)) {
           // Never send the robot a tool it didn't offer: it answers slowly, and only with an error.
           text = this.mcp.loading
             ? 'Error: your robot tools are still starting up. Say so briefly and ask them to try again in a moment.'
             : `Error: there is no tool called ${call.name}. You can't do that right now; say so briefly.`;
         } else {
+          if (isCamera) await policy.beforePhoto?.();
           text = await this.mcp.callTool(call.name, args, { timeoutMs, signal });
+          if (call.name === 'self.robot.start_timer' && !text.startsWith('Error:')) policy.permitted?.delete(call.name);
           if (isCamera) text = cameraResultText(text);
           if (call.name === 'self.robot.get_reminders') {
             try {
               const reminders = JSON.parse(text);
               if (Array.isArray(reminders)) {
-                text = JSON.stringify(reminders.map(({ id, message, repeat, remaining_ms }) => ({ id, message, repeat, remaining_ms })));
+                const entries = reminders.filter(entry => entry && typeof entry.message === 'string');
+                text = JSON.stringify(entries.map(({ id, message, repeat, remaining_ms, timer }) => ({ id, message, repeat, remaining_ms, timer })));
+                if (!policy.hideReminders && !signal.aborted) {
+                  const items: LiveCardItem[] = entries.sort((a, b) => (a.remaining_ms ?? Infinity) - (b.remaining_ms ?? Infinity)).slice(0, 11)
+                    .map(({ message, remaining_ms, timer, repeat }) => ({ title: message.slice(0, 160),
+                      badge: dueLabel(remaining_ms), detail: timer ? 'Timer' : repeat ? 'Repeats' : undefined }));
+                  if (!items.length) items.push({ title: 'No reminders or timers set' });
+                  if (entries.length > 11) items.push({ title: `${entries.length - 11} more reminders` });
+                  this.sendCard(makeLiveCard('reminders', 'Reminders & timers', '', items));
+                }
               }
             } catch {
               text = 'Error: the robot returned an unreadable reminder list.';
@@ -627,6 +765,10 @@ export class Session {
         }
       } catch (err) {
         text = `Error: ${(err as Error).message}`;
+      }
+      if (lookupStarted && (call.name === 'get_weather' || call.name === 'get_london_departures')) {
+        const outcome = text.startsWith('Error:') ? 'failed' : lookupSource ? 'returned' : 'returned no board or forecast';
+        policy.liveLookups.push({ name: call.name, outcome, source: outcome === 'returned' ? lookupSource : undefined });
       }
       if (call.name === 'self.robot.set_head_angles') movementFailed = text.startsWith('Error:');
       this.deps.log(!this.deps.config.logConversation

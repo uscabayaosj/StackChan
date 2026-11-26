@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_mac.h"
+#include <pthread.h>
 
 /* BLE */
 #include "bleprph.h"
@@ -78,6 +79,9 @@ static uint16_t bearers;
 #endif
 
 static bool s_use_alt_uuid = false;
+static pthread_mutex_t s_host_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool s_peripheral_started = false;
+static bool s_central_started = false;
 
 void ble_store_config_init(void);
 
@@ -636,7 +640,7 @@ void bleprph_host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-void ble_prph_init(bool use_alt_uuid)
+static void init_peripheral(bool use_alt_uuid)
 {
     s_use_alt_uuid = use_alt_uuid;
     int rc;
@@ -703,6 +707,7 @@ void ble_prph_init(bool use_alt_uuid)
     ble_store_config_init();
 
     nimble_port_freertos_init(bleprph_host_task);
+    s_peripheral_started = true;
 
     /* Initialize command line interface to accept input from user */
     rc = scli_init();
@@ -716,4 +721,51 @@ void ble_prph_init(bool use_alt_uuid)
         cids[i] = 0;
     }
 #endif
+}
+
+static void central_on_sync(void)
+{
+    const int rc = ble_hs_util_ensure_addr(0);
+    if (rc != 0) ESP_LOGW(tag, "Could not find a local BLE address: %d", rc);
+}
+
+static void stop_central(void)
+{
+    int rc = nimble_port_stop();
+    if (rc == 0) {
+        s_central_started = false;
+        rc = nimble_port_deinit();
+    }
+    if (rc != 0) ESP_LOGW(tag, "Could not stop the temporary BLE host: %d", rc);
+}
+
+void ble_prph_init(bool use_alt_uuid)
+{
+    pthread_mutex_lock(&s_host_mutex);
+    if (s_central_started) stop_central();
+    if (!s_central_started) init_peripheral(use_alt_uuid);
+    pthread_mutex_unlock(&s_host_mutex);
+}
+
+int stackchan_ble_acquire_central(void)
+{
+    pthread_mutex_lock(&s_host_mutex);
+    if (s_peripheral_started || s_central_started) return 0;
+    int rc = nimble_port_init();
+    if (rc != ESP_OK) {
+        ESP_LOGW(tag, "Could not initialize the BLE central host: %d", rc);
+        pthread_mutex_unlock(&s_host_mutex);
+        return rc;
+    }
+
+    ble_hs_cfg.reset_cb = bleprph_on_reset;
+    ble_hs_cfg.sync_cb = central_on_sync;
+    nimble_port_freertos_init(bleprph_host_task);
+    s_central_started = true;
+    return 0;
+}
+
+void stackchan_ble_release_central(void)
+{
+    pthread_mutex_unlock(&s_host_mutex);
 }

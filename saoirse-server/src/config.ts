@@ -1,4 +1,5 @@
 import { assertTimeZone } from './clock.js';
+import type { ICloudConfig } from './icloud_dav.js';
 
 export interface LlmConfig {
   protocol?: 'anthropic';
@@ -15,6 +16,7 @@ export type ReasoningEffort = 'low' | 'medium' | 'high' | 'none';
 
 export interface Config {
   darwinAuthorization?: string;
+  railDataApiKey?: string;
   logConversation?: boolean;
   speechGain?: number;
   llm: LlmConfig;
@@ -37,6 +39,7 @@ export interface Config {
   ttsTimeoutMs: number;
   /** IANA time zone of the robot (e.g. Asia/Manila): OTA clock offset and the prompt's local time. */
   deviceTz: string;
+  iCloudCalendar?: ICloudConfig;
   /** Robot MCP tools offered to the LLM (names as the robot advertises them). */
   deviceTools: string[];
   /** Server-side tools offered to the LLM: get_weather, web_search, calculate, convert_units. */
@@ -54,8 +57,9 @@ export interface Config {
 
 export const DEFAULT_DEVICE_TOOLS = [
   'self.camera.take_photo', 'self.robot.set_head_angles', 'self.robot.get_head_angles', 'self.robot.set_led_color',
-  'self.robot.create_reminder', 'self.robot.get_reminders', 'self.robot.stop_reminder',
+  'self.robot.create_reminder', 'self.robot.get_reminders', 'self.robot.stop_reminder', 'self.robot.start_timer',
   'self.get_device_status', 'self.audio_speaker.set_volume', 'self.screen.set_brightness', 'self.screen.set_theme',
+  'self.robot.get_indoor_climate',
 ];
 
 /** `wss://host/api/ws` -> `https://host/api/vision` (ws -> http for local runs). */
@@ -104,8 +108,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.VERCEL && !otaSecret) throw new Error('OTA_SECRET must be set on Vercel (/api/ota hands out the WebSocket token); flash the robot with CONFIG_OTA_URL ...?k=<secret> first');
   // Locally an empty token means "auth off"; a public deployment must never run open.
   if (env.VERCEL && !deviceToken) throw new Error('SAOIRSE_DEVICE_TOKEN must be set on Vercel (an empty token would leave /api/ws open)');
+  const calendarName = env.ICLOUD_CALENDAR_NAME?.trim();
+  if (calendarName && (!deviceToken || !otaSecret)) {
+    throw new Error('iCloud Calendar requires SAOIRSE_DEVICE_TOKEN and OTA_SECRET');
+  }
   return {
     darwinAuthorization: env.DARWIN_AUTHORIZATION,
+    railDataApiKey: env.RAIL_DATA_API_KEY?.trim() || undefined,
     logConversation: env.LOG_CONVERSATION === 'true',
     speechGain: Math.min(2, Math.max(1, num(env, 'SPEECH_GAIN', 1.25))),
     llm: anthropicKey ? {
@@ -155,6 +164,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llmTimeoutMs: num(env, 'LLM_TIMEOUT_MS', 15_000),
     ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
     deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
+    iCloudCalendar: calendarName ? {
+      name: calendarName,
+      account: req(env, 'ICLOUD_CALENDAR_ACCOUNT').trim(),
+      password: req(env, 'ICLOUD_CALENDAR_APP_PASSWORD').trim(),
+    } : undefined,
     deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
     serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until,get_london_departures,show_word_definition').split(',').map(s => s.trim()).filter(Boolean),
     // Home for the weather tool. A WEATHER_PLACE without both coordinates is geocoded on use, never

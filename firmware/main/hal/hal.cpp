@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "xiaomi_sensor.h"
 #include <memory>
 #include <mooncake_log.h>
 #include <nvs_flash.h>
@@ -32,6 +33,7 @@ void Hal::init()
     }
     ESP_ERROR_CHECK(ret);
 
+    xiaomi_sensor::prepare();
     xiaozhi_board_init();
     xiaozhi_mcp_init();
     head_touch_init();
@@ -131,6 +133,8 @@ void Hal::updateHeapStatusLog()
 /*                                   Xiaozhi                                  */
 /* -------------------------------------------------------------------------- */
 #include "board/hal_bridge.h"
+#include "board/stackchan_display.h"
+#include <board.h>
 #include <stackchan/stackchan.h>
 #include <apps/common/common.h>
 #include <assets/assets.h>
@@ -151,12 +155,12 @@ static void _stackchan_update_task(void* param)
 
         tools::update_reminders();
 
-        LvglLockGuard lock;
-
         if (!hal_bridge::is_xiaozhi_idle()) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
 
+        // Let LVGL continue rendering the face while the avatar task waits.
+        LvglLockGuard lock;
         GetStackChan().update();
 
         if (!hal_bridge::is_xiaozhi_ready()) {
@@ -186,13 +190,10 @@ void Hal::startXiaozhi()
 
     // Setup reminder handler
     tools::on_reminder_triggered().clear();
-    tools::on_reminder_triggered().connect([](int id, std::string_view msg) {
+    tools::on_reminder_triggered().connect([](int id, std::string_view msg, bool timer) {
         mclog::tagInfo(_tag, "reminder triggered: id: {}", id);
-        {
-            LvglLockGuard lock;
-            auto& avatar = GetStackChan().avatar();
-            avatar.addDecorator(std::make_unique<view::ReminderView>(lv_screen_active(), msg));
-        }
+        auto* display = static_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
+        if (display) display->ShowReminderDue(id, std::string(msg), timer);
         hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);
     });
 

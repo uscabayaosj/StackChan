@@ -4,6 +4,10 @@
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <esp_timer.h>
+
 #define TAG "CoreS3AudioCodec"
 
 CoreS3AudioCodec::CoreS3AudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
@@ -240,6 +244,21 @@ int CoreS3AudioCodec::Read(int16_t* dest, int samples) {
 
 int CoreS3AudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
+        if (samples > 0) {
+            int magnitude = 0;
+            int measured = 0;
+            for (int i = 0; i < samples; i += 8) {
+                magnitude += std::abs(static_cast<int>(data[i]));
+                ++measured;
+            }
+            // Ignore silence and the server's silent tool keepalive frames.
+            const int mean = magnitude / measured;
+            const int level = std::clamp((mean - 100) / 18, 0, 100);
+            playback_level_.store(level, std::memory_order_relaxed);
+            if (level > 0) {
+                last_voiced_output_ms_.store(esp_timer_get_time() / 1000, std::memory_order_relaxed);
+            }
+        }
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
     }
     return samples;

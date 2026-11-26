@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "stackchan_display.h"
+#include "cores3_audio_codec.h"
+#include <board.h>
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_lvgl_port.h>
@@ -18,6 +20,7 @@
 #include <stackchan/stackchan.h>
 #include <assets/lang_config.h>
 #include <hal/hal.h>
+#include <apps/common/reminder/reminder.h>
 
 using namespace stackchan;
 using namespace stackchan::avatar;
@@ -166,20 +169,6 @@ StackChanAvatarDisplay::StackChanAvatarDisplay(esp_lcd_panel_io_handle_t panel_i
         lv_display_set_offset(display_, offset_x, offset_y);
     }
 
-    // Create a timer to hide the preview image
-    esp_timer_create_args_t preview_timer_args = {
-        .callback =
-            [](void* arg) {
-                StackChanAvatarDisplay* display = static_cast<StackChanAvatarDisplay*>(arg);
-                display->SetPreviewImage(nullptr);
-            },
-        .arg                   = this,
-        .dispatch_method       = ESP_TIMER_TASK,
-        .name                  = "preview_timer",
-        .skip_unhandled_events = false,
-    };
-    esp_timer_create(&preview_timer_args, &preview_timer_);
-
     // Create boot logo label if not warm boot
     if (GetHAL().getWarmRebootTarget() < 0) {
         ESP_LOGI(TAG, "Create boot logo label");
@@ -199,9 +188,12 @@ StackChanAvatarDisplay::~StackChanAvatarDisplay()
 {
     ESP_LOGI(TAG, "Destroying StackChanAvatarDisplay");
 
+    if (conversation_timer_ != nullptr) {
+        lv_timer_delete(conversation_timer_);
+    }
+
     if (preview_timer_ != nullptr) {
-        esp_timer_stop(preview_timer_);
-        esp_timer_delete(preview_timer_);
+        lv_timer_delete(preview_timer_);
     }
 
     if (preview_image_ != nullptr) {
@@ -269,6 +261,11 @@ void StackChanAvatarDisplay::SetupUI()
     avatar->getPanel()->onClick().connect([]() { ToggleChatDebounced(); });
 
     stackchan.attachAvatar(std::move(avatar));
+#ifdef CONFIG_STACKCHAN_SKIN_SAOIRSE
+    conversation_timer_ = lv_timer_create([](lv_timer_t* timer) {
+        static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer))->UpdateConversationFace();
+    }, 33, this);
+#endif
     stackchan.addModifier(std::make_unique<BreathModifier>());
     blink_modifier_id_ = stackchan.addModifier(std::make_unique<BlinkModifier>());
     stackchan.addModifier(std::make_unique<HeadPetModifier>());
@@ -286,6 +283,15 @@ void StackChanAvatarDisplay::SetupUI()
     lv_obj_set_size(preview_image_, 320, 240);
     lv_obj_align(preview_image_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    preview_timer_ = lv_timer_create([](lv_timer_t* timer) {
+        auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
+        if (display->preview_waiting_) {
+            display->ShowPhotoPreview();
+        } else {
+            display->HidePhotoPreview();
+        }
+    }, 6000, this);
+    lv_timer_pause(preview_timer_);
 
     // GetHAL().startStackChanAutoUpdate(24);
 
@@ -368,6 +374,8 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
         if (idle_motion_modifier_id_ >= 0) {
             stackchan.removeModifier(idle_motion_modifier_id_);
             idle_motion_modifier_id_ = -1;
+        }
+        if (idle_expression_modifier_id_ >= 0) {
             stackchan.removeModifier(idle_expression_modifier_id_);
             idle_expression_modifier_id_ = -1;
         }
@@ -405,10 +413,12 @@ void StackChanAvatarDisplay::SetChatMessage(const char* role, const char* conten
 
     DisplayLockGuard lock(this);
 
-    if (strcmp(role, "system") == 0) {
+    if (strcmp(role, "system") == 0 || strcmp(role, "assistant") == 0) {
         stackchan.avatar().setSpeech(content);
-    } else if (strcmp(role, "assistant") == 0) {
-        stackchan.avatar().setSpeech(content);
+    } else if (conversation_timer_ && strcmp(role, "user") == 0 && content && *content && !reply_audio_expected_) {
+        // The server sends the user's transcript when it accepts the utterance.
+        thinking_started_ms_ = GetHAL().millis();
+        SetConversationFace(ConversationActivity::Thinking);
     }
 }
 
@@ -426,33 +436,74 @@ void StackChanAvatarDisplay::ClearChatMessages()
     ESP_LOGI(TAG, "Chat messages cleared");
 }
 
-void StackChanAvatarDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image)
+void StackChanAvatarDisplay::PlayPhotoShutter()
 {
     DisplayLockGuard lock(this);
-    if (preview_image_ == nullptr) {
+    auto& stackchan = GetStackChan();
+    if (!preview_image_ || !stackchan.hasAvatar()) {
         return;
     }
 
-    if (image == nullptr) {
-        esp_timer_stop(preview_timer_);
-        lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
-        preview_image_cached_.reset();
+    shutter_duration_ms_ = stackchan.avatar().playPhotoShutter();
+    if (shutter_duration_ms_ > 0) {
+        shutter_started_ms_ = lv_tick_get();
+        HidePhotoPreview();
+        ESP_LOGI(TAG, "Camera shutter eyes started");
+    }
+}
+
+void StackChanAvatarDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image)
+{
+    DisplayLockGuard lock(this);
+    if (!preview_image_) {
+        return;
+    }
+
+    HidePhotoPreview();
+    if (!image) {
         return;
     }
 
     preview_image_cached_ = std::move(image);
-    auto img_dsc          = preview_image_cached_->image_dsc();
-    // Set image source and show preview image
+    auto img_dsc = preview_image_cached_->image_dsc();
     lv_image_set_src(preview_image_, img_dsc);
     if (img_dsc->header.w > 0 && img_dsc->header.h > 0) {
-        // Scale to fit width
         lv_image_set_scale(preview_image_, 256 * width_ / img_dsc->header.w);
     }
 
+    // Keep the preview behind the face until the shutter has reopened.
+    const uint32_t elapsed = lv_tick_elaps(shutter_started_ms_);
+    if (elapsed < shutter_duration_ms_) {
+        preview_waiting_ = true;
+        SchedulePreviewTimer(shutter_duration_ms_ - elapsed);
+    } else {
+        ShowPhotoPreview();
+    }
+}
+
+void StackChanAvatarDisplay::HidePhotoPreview()
+{
+    lv_timer_pause(preview_timer_);
+    lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    lv_image_set_src(preview_image_, nullptr);
+    preview_image_cached_.reset();
+    preview_waiting_ = false;
+}
+
+void StackChanAvatarDisplay::ShowPhotoPreview()
+{
+    preview_waiting_ = false;
+    shutter_duration_ms_ = 0;
     lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(preview_image_);
-    esp_timer_stop(preview_timer_);
-    ESP_ERROR_CHECK(esp_timer_start_once(preview_timer_, 6000 * 1000));
+    SchedulePreviewTimer(6000);
+}
+
+void StackChanAvatarDisplay::SchedulePreviewTimer(uint32_t delayMs)
+{
+    lv_timer_set_period(preview_timer_, delayMs);
+    lv_timer_reset(preview_timer_);
+    lv_timer_resume(preview_timer_);
 }
 
 void StackChanAvatarDisplay::UpdateStatusBar(bool update_all)
@@ -489,6 +540,49 @@ bool hal_bridge::is_xiaozhi_idle()
     return _is_xiaozhi_idle;
 }
 
+void StackChanAvatarDisplay::SetConversationFace(ConversationActivity activity)
+{
+    auto& avatar = GetStackChan().avatar();
+    if (avatar.getConversationActivity() == activity) {
+        return;
+    }
+    avatar.setConversationActivity(activity);
+    switch (activity) {
+        case ConversationActivity::Idle:      ESP_LOGI(TAG, "Conversation face: idle"); break;
+        case ConversationActivity::Listening: ESP_LOGI(TAG, "Conversation face: listening"); break;
+        case ConversationActivity::Thinking:  ESP_LOGI(TAG, "Conversation face: thinking"); break;
+        case ConversationActivity::Talking:   ESP_LOGI(TAG, "Conversation face: talking"); break;
+    }
+}
+
+void StackChanAvatarDisplay::UpdateConversationFace()
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) {
+        return;
+    }
+
+    auto& avatar = stackchan.avatar();
+    if (!reply_audio_expected_ && avatar.getConversationActivity() != ConversationActivity::Thinking) {
+        return;
+    }
+
+    if (reply_audio_expected_) {
+        const auto* codec = static_cast<CoreS3AudioCodec*>(Board::GetInstance().GetAudioCodec());
+        const auto lastVoice = codec->LastVoicedOutputMs();
+        const uint32_t age = GetHAL().millis() - lastVoice;
+        // Hold the talking pose through a short pause. Longer gaps include tool waits.
+        const auto activity = avatar.getConversationActivity();
+        const uint32_t holdMs = activity == ConversationActivity::Talking ? 750 : 150;
+        const bool voiced = lastVoice != 0 && age < holdMs;
+        avatar.mouth().setWeight(voiced && age < 150 ? codec->PlaybackLevel() : 0);
+        SetConversationFace(voiced ? ConversationActivity::Talking : ConversationActivity::Thinking);
+    } else if (GetHAL().millis() - thinking_started_ms_ >= 30000) {
+        // If the turn produces no response, return to the current microphone state.
+        SetConversationFace(face_rest_activity_);
+    }
+}
+
 void StackChanAvatarDisplay::SetStatus(const char* status)
 {
     // ESP_LOGE(TAG, "SetStatus: %s", status);
@@ -500,14 +594,23 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     }
 
     auto& avatar = stackchan.avatar();
-    auto& motion = stackchan.motion();
 
     DisplayLockGuard lock(this);
 
-    bool is_idle      = false;
-    bool is_listening = false;
+    const bool is_listening = strcmp(status, Lang::Strings::LISTENING) == 0;
+    const bool is_idle = strcmp(status, Lang::Strings::STANDBY) == 0;
+    const bool is_connecting = strcmp(status, Lang::Strings::CONNECTING) == 0;
+    if (conversation_timer_ && (is_idle || is_listening || is_connecting)) {
+        reply_audio_expected_ = false;
+        avatar.mouth().setWeight(0);
+        face_rest_activity_ = is_listening ? ConversationActivity::Listening : ConversationActivity::Idle;
+        if (is_listening || is_connecting) {
+            avatar.clearSpeech();
+        }
+        SetConversationFace(face_rest_activity_);
+    }
 
-    if (strcmp(status, Lang::Strings::LISTENING) == 0) {
+    if (is_listening) {
         if (speaking_modifier_id_ >= 0) {
             // Start speaking
             stackchan.removeModifier(speaking_modifier_id_);
@@ -517,7 +620,7 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
 
         SetStateLight(0, 50, 0);
 
-    } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+    } else if (is_idle) {
         _is_xiaozhi_ready = true;
 
         if (speaking_modifier_id_ >= 0) {
@@ -527,12 +630,13 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
-        is_idle = true;
-
         SetStateLight(0, 0, 0);
 
     } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
-        if (speaking_modifier_id_ < 0) {
+        if (conversation_timer_) {
+            reply_audio_expected_ = true;
+            UpdateConversationFace();
+        } else if (speaking_modifier_id_ < 0) {
             speaking_modifier_id_ = stackchan.addModifier(std::make_unique<SpeakingModifier>(0, 180, false));
         }
 
@@ -544,10 +648,10 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     if (is_idle) {
         // Start idle motion
         ESP_LOGW(TAG, "Start idle motion");
-        if (idle_motion_modifier_id_ < 0) {
-            if (idle_motion_level_ > 0) {
-                CreateIdleMotionModifier();
-            }
+        if (idle_motion_modifier_id_ < 0 && idle_motion_level_ > 0) {
+            CreateIdleMotionModifier();
+        }
+        if (idle_expression_modifier_id_ < 0) {
             idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
         }
 
@@ -558,15 +662,11 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
         if (idle_motion_modifier_id_ >= 0) {
             stackchan.removeModifier(idle_motion_modifier_id_);
             idle_motion_modifier_id_ = -1;
+        }
+        if (idle_expression_modifier_id_ >= 0) {
             stackchan.removeModifier(idle_expression_modifier_id_);
             idle_expression_modifier_id_ = -1;
         }
-
-        // if (!is_listening) {
-        //     // Return to default pose
-        //     motion.pitchServo().moveWithSpeed(200, 350);
-        //     motion.yawServo().moveWithSpeed(0, 350);
-        // }
 
         _is_xiaozhi_idle = false;
     }
@@ -615,6 +715,30 @@ void StackChanAvatarDisplay::StartHappyFlash()
         neon_flash_modifier_id_ = -1;
         ApplyStateLight();
     }));
+}
+
+void StackChanAvatarDisplay::ShowInfoCard(const InfoCard& card)
+{
+    DisplayLockGuard lock(this);
+    info_cards_.Show(card);
+}
+
+void StackChanAvatarDisplay::StartTimerCard(int id, uint32_t duration_ms, const std::string& name)
+{
+    DisplayLockGuard lock(this);
+    info_cards_.StartTimer(id, duration_ms, name, tools::stop_reminder);
+}
+
+void StackChanAvatarDisplay::StopTimerCard(int id)
+{
+    DisplayLockGuard lock(this);
+    info_cards_.StopTimer(id);
+}
+
+void StackChanAvatarDisplay::ShowReminderDue(int id, const std::string& message, bool timer)
+{
+    DisplayLockGuard lock(this);
+    info_cards_.ReminderDue(id, message, timer);
 }
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)

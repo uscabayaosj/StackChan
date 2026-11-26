@@ -6,7 +6,7 @@
 #include <chrono>
 
 enum class HeadPetGesture { None, Press, Release, SwipeForward, SwipeBackward };
-enum class ImuMotionEvent { None = 0, Shake, PickUp };
+enum class ImuMotionEvent { None = 0, Shake, PickUp, TipOver, Upright };
 
 template <typename... Args>
 class StubSignal {

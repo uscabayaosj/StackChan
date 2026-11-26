@@ -3,6 +3,7 @@
 
 #include "audio_codec.h"
 
+#include <atomic>
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
 
@@ -17,6 +18,8 @@ private:
 
     esp_codec_dev_handle_t output_dev_ = nullptr;
     esp_codec_dev_handle_t input_dev_ = nullptr;
+    std::atomic<uint32_t> last_voiced_output_ms_{0};
+    std::atomic<int> playback_level_{0};
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
 
@@ -28,6 +31,9 @@ public:
         gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
         uint8_t aw88298_addr, uint8_t es7210_addr, bool input_reference);
     virtual ~CoreS3AudioCodec();
+
+    uint32_t LastVoicedOutputMs() const { return last_voiced_output_ms_.load(std::memory_order_relaxed); }
+    int PlaybackLevel() const { return playback_level_.load(std::memory_order_relaxed); }
 
     virtual void SetOutputVolume(int volume) override;
     virtual void EnableInput(bool enable) override;

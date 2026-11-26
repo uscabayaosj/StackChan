@@ -322,6 +322,11 @@ idf_component_register(SRCS ${SOURCES}
                         smooth_ui_toolkit
                     )
 
+# The background travels with the firmware so switching OTA slots also switches the face.
+if(CONFIG_STACKCHAN_SKIN_SAOIRSE)
+    target_add_binary_data(${COMPONENT_LIB} "assets/assets_bin/saoirse_base.png" BINARY)
+endif()
+
 # Use target_compile_definitions to define BOARD_TYPE, BOARD_NAME
 # If BOARD_NAME is empty, use BOARD_TYPE
 if(NOT BOARD_NAME)

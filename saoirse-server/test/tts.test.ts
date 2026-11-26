@@ -61,6 +61,21 @@ describe('synthesizeToFrames', () => {
     expect(url).toBe('https://api.elevenlabs.io/v1/text-to-speech/a%2Fb%20c%3F/stream?output_format=pcm_24000');
   });
 
+  it('boosts quieter samples and compresses peaks without saturating PCM', async () => {
+    const codec = makeCodec();
+    const pcm = Buffer.alloc(OUT_FRAME_BYTES);
+    [4_000, -4_000, 18_000, 24_000, -32_768].forEach((sample, i) => pcm.writeInt16LE(sample, i * 2));
+    await collect(synthesizeToFrames(cfg, 'Hello.', codec, streamFetch([pcm]), { gain: 2 }));
+    const output = codec.inputs[0];
+    expect(output.readInt16LE(0)).toBe(8_000);
+    expect(output.readInt16LE(2)).toBe(-8_000);
+    expect(output.readInt16LE(4)).toBeGreaterThan(24_576);
+    expect(output.readInt16LE(6)).toBeGreaterThan(output.readInt16LE(4));
+    expect(output.readInt16LE(6)).toBeLessThan(32_000);
+    expect(output.readInt16LE(8)).toBeGreaterThan(-32_000);
+    expect(output.readInt16LE(10)).toBe(0);
+  });
+
   it('reassembles odd-sized chunks (1501 + 1499 + 7 bytes)', async () => {
     const codec = makeCodec();
     const frames = await collect(

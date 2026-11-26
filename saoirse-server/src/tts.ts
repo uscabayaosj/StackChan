@@ -1,6 +1,9 @@
 import type { Config } from './config.js';
 import { OUT_FRAME_BYTES, OUTPUT_SAMPLE_RATE, padFrame, type OpusCodec } from './opus.js';
 
+const LIMITER_KNEE = 24_576;
+const LIMITER_HEADROOM = 32_000 - LIMITER_KNEE;
+
 export async function* synthesizeToFrames(
   cfg: Config['elevenlabs'],
   text: string,
@@ -25,7 +28,11 @@ export async function* synthesizeToFrames(
     const amplified = Buffer.from(pcm);
     for (let i = 0; i < pcm.length; i += 2) {
       const sample = pcm.readInt16LE(i) * gain;
-      amplified.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample))), i);
+      const magnitude = Math.abs(sample);
+      const over = magnitude - LIMITER_KNEE;
+      // Keep the requested gain below the knee and smoothly compress peaks above it.
+      const limited = over > 0 ? LIMITER_KNEE + LIMITER_HEADROOM * over / (LIMITER_HEADROOM + over) : magnitude;
+      amplified.writeInt16LE(Math.round(Math.sign(sample) * limited), i);
     }
     return codec.encodeFrame(amplified);
   };

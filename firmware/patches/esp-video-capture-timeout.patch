@@ -1,0 +1,12 @@
+--- esp_video_ioctl.c
++++ esp_video_ioctl.c
+@@ -177,3 +177,3 @@
+     esp_err_t ret;
+-    uint32_t ticks = portMAX_DELAY;
++    uint32_t ticks = pdMS_TO_TICKS(1200);
+     struct esp_video_buffer_info info;
+@@ -192,3 +192,3 @@
+     if (!element) {
+-        return ESP_FAIL;
++        return ESP_ERR_TIMEOUT;
+     }

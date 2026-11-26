@@ -1,6 +1,5 @@
 /*
- * Saoirse skin: the owner's Birman cat, traced from a photo.
- * Static art is saoirse_base.png; eyes, lids and mouth are live LVGL objects.
+ * Saoirse avatar and legacy illustrated face elements.
  */
 #pragma once
 #include "../../avatar/avatar.h"
@@ -100,14 +99,17 @@ private:
 
 class SaoirseAvatar : public Avatar {
 public:
+    uint32_t playPhotoShutter() override;
     ~SaoirseAvatar() override;  // destroys features/decorators before the panel (LVGL wrappers delete unconditionally)
     void init(lv_obj_t* parent, const lv_font_t* font = &lv_font_montserrat_16) override;
     uitk::lvgl_cpp::Container* getPanel() const override;  // never null after init(): two call sites dereference it
 
 private:
-    lv_image_dsc_t _base_dsc{};
+    void drawPhotoShutter(lv_layer_t* layer) const;
+
     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
-    std::unique_ptr<uitk::lvgl_cpp::Image> _base;
+    lv_obj_t* _shutter_layer = nullptr;
+    int32_t _shutter_frame_ms = 0;
 };
 
 }  // namespace stackchan::avatar

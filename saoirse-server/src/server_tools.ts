@@ -82,11 +82,15 @@ function weatherTool(cfg: Config, fetchImpl: typeof fetch): ServerTool {
       const forecast = await getJson(url, fetchImpl, signal);
       if (!Number.isFinite(forecast?.current?.temperature_2m)) return 'Error: current weather was missing from the feed.';
       const c = forecast.current;
-      display?.({ title: place + ' weather', source: 'Open-Meteo • current conditions', rows: [
-        `${round(c.temperature_2m)}°C • ${describeWeatherCode(c.weather_code)}`,
-        `Feels like ${round(c.apparent_temperature)}°C • Wind ${round(c.wind_speed_10m)} km/h`,
-        ...(days > 1 && forecast.daily?.time?.[1] ? [`Tomorrow ${round(forecast.daily.temperature_2m_min?.[1])} to ${round(forecast.daily.temperature_2m_max?.[1])}°C`] : []),
-      ] });
+      const daily = forecast.daily ?? {};
+      const items = ['Today', 'Tomorrow', 'Day after'].slice(0, days).flatMap((day, i) => daily.time?.[i] ? [{
+        title: day, badge: `${round(daily.temperature_2m_min?.[i])}-${round(daily.temperature_2m_max?.[i])}°`,
+        detail: `${describeWeatherCode(daily.weather_code?.[i])}  /  ${round(daily.precipitation_probability_max?.[i])}% rain`,
+      }] : []);
+      display?.(makeLiveCard('weather', place, 'Open-Meteo', items, {
+        hero: `${round(c.temperature_2m)}°`,
+        subtitle: `${describeWeatherCode(c.weather_code)}\nFeels ${round(c.apparent_temperature)}°C   /   Wind ${round(c.wind_speed_10m)} km/h`,
+      }));
       return formatForecast(place, forecast, days);
     },
   };
@@ -192,7 +196,8 @@ function wordDefinitionTool(timeoutMs: number): ServerTool {
 
 /** The server tools enabled by `cfg.serverTools`. */
 export function createServerTools(cfg: Config, fetchImpl: typeof fetch = fetch): ServerTool[] {
-  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz), transportTool(fetchImpl, cfg.darwinAuthorization), wordDefinitionTool(cfg.toolTimeoutMs.other)];
+  const all = [weatherTool(cfg, fetchImpl), webSearchTool(cfg, fetchImpl), ...createUtilityTools(cfg.toolTimeoutMs.other, cfg.deviceTz),
+    transportTool(fetchImpl, cfg.darwinAuthorization, cfg.railDataApiKey), wordDefinitionTool(cfg.toolTimeoutMs.other)];
   const on = new Set(cfg.serverTools);
   return all.filter(t => on.has(t.spec.function.name));
 }

@@ -14,6 +14,7 @@
 #include <apps/common/common.h>
 #include <board.h>
 #include "board/stackchan_display.h"
+#include "xiaomi_sensor.h"
 
 using namespace stackchan;
 
@@ -29,6 +30,23 @@ void Hal::xiaozhi_mcp_init()
     // System Prompt：
     // You can control the robot's head. Use get_yaw and get_pitch to sense current position. Use set_yaw for horizontal
     // movement and set_pitch for vertical movement. All angles are in degrees.
+
+    if (xiaomi_sensor::configured()) {
+        mcp_server.AddTool("self.robot.get_indoor_climate",
+                           "Read the configured Xiaomi Bluetooth room sensor now. Use for indoor temperature, indoor "
+                           "humidity, how warm or cold the room is, or the Xiaomi thermometer. Return only requested "
+                           "values and say that the sensor did not respond if the tool fails.",
+                           std::vector<Property>{}, [](const PropertyList&) -> ReturnValue {
+                               xiaomi_sensor::Reading reading{};
+                               if (!xiaomi_sensor::read(reading)) {
+                                   throw std::runtime_error("The Xiaomi room sensor did not respond over Bluetooth.");
+                               }
+                               auto* result = cJSON_CreateObject();
+                               cJSON_AddNumberToObject(result, "temperature_c", reading.temperature_centi_celsius / 100.0);
+                               cJSON_AddNumberToObject(result, "relative_humidity_percent", reading.humidity_percent);
+                               return result;
+                           });
+    }
 
     mclog::tagInfo(_tag, "add robot.get_head_angles tool");
     mcp_server.AddTool("self.robot.get_head_angles",
@@ -144,6 +162,22 @@ void Hal::xiaozhi_mcp_init()
 
                            int id = tools::create_reminder(duration_seconds * 1000, message, repeat);
 
+                           auto* display = Board::GetInstance().GetDisplay();
+                           if (display) display->ShowInfoCard({.kind = "reminders", .title = "Reminder set",
+                               .items = {{.title = message, .detail = repeat ? "Repeats" : "One time"}}});
+
+                           return id;
+                       });
+
+    mcp_server.AddTool("self.robot.start_timer", "Start a one-off countdown on the robot screen with a chime at zero.",
+                       PropertyList({Property("duration_seconds", kPropertyTypeInteger, 60, 1, 86400),
+                                     Property("label", kPropertyTypeString, std::string())}),
+                       [](const PropertyList& properties) -> ReturnValue {
+                           const auto duration_ms = static_cast<uint32_t>(properties["duration_seconds"].value<int>()) * 1000;
+                           const auto label = properties["label"].value<std::string>();
+                           const int id = tools::create_reminder(duration_ms, label.empty() ? "Countdown finished" : label, false, true);
+                           auto* display = static_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
+                           if (display) display->StartTimerCard(id, duration_ms, label);
                            return id;
                        });
 
@@ -159,6 +193,7 @@ void Hal::xiaozhi_mcp_init()
                                cJSON_AddNumberToObject(item, "remaining_ms", reminder.remainingMs);
                                cJSON_AddStringToObject(item, "message", reminder.message.c_str());
                                cJSON_AddBoolToObject(item, "repeat", reminder.repeat);
+                               cJSON_AddBoolToObject(item, "timer", reminder.timer);
                                cJSON_AddItemToArray(result, item);
                            }
                            return result;
@@ -171,6 +206,8 @@ void Hal::xiaozhi_mcp_init()
                            int id = properties["id"].value<int>();
                            mclog::tagInfo(_tag, "stop_reminder: id={}", id);
                            if (!tools::stop_reminder(id)) throw std::runtime_error("No active reminder with that ID");
+                           auto* display = static_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
+                           if (display) display->StopTimerCard(id);
                            return true;
                        });
 }

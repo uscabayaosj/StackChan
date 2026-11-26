@@ -12,6 +12,8 @@
 
 namespace stackchan::avatar {
 
+enum class ConversationActivity { Idle, Listening, Thinking, Talking };
+
 /**
  * @brief Avatar base class
  *
@@ -66,6 +68,12 @@ public:
             decorator->setEmotion(emotion);
         });
     }
+
+    // Returns the time needed to play the shutter before showing a photo preview.
+    virtual uint32_t playPhotoShutter() { return 0; }
+
+    void setConversationActivity(ConversationActivity activity) { _activity = activity; }
+    ConversationActivity getConversationActivity() const { return _activity; }
 
     Emotion getEmotion() const
     {
@@ -138,6 +146,7 @@ public:
 protected:
     Avatar() = default;
 
+    ConversationActivity _activity = ConversationActivity::Idle;
     Emotion _emotion = Emotion::Neutral;
     KeyElements_t _key_elements;
     ObjectPool<Decorator> _decorator_pool;

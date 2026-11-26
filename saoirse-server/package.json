@@ -13,6 +13,9 @@
     "fake-robot": "tsx scripts/fake-robot.ts"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "@xmldom/xmldom": "0.9.12",
+    "ical.js": "2.2.1",
     "opusscript": "^0.1.1",
     "ws": "^8.22.0"
   },

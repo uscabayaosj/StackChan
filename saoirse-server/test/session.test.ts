@@ -46,6 +46,65 @@ function utter(s: Session, env: ReturnType<typeof makeEnv>) {
 
 const hello = JSON.stringify({ type: 'hello', version: 1, transport: 'websocket', audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 } });
 
+describe('Calendar voice interaction', () => {
+  it('writes once after an explicit confirmation and keeps calendar details out of history and logs', async () => {
+    const env = makeEnv();
+    const save = vi.fn(async () => {});
+    const title = 'Private appointment';
+    env.deps.calendar = {
+      list: async (_args, _signal, display) => {
+        display?.({ kind: 'calendar', title: 'Test calendar', source: 'iCloud', rows: [title], items: [{ title }] });
+        return [`${title} tomorrow at noon.`];
+      },
+      prepare: async () => ({ preview: [`Add ${title} tomorrow at noon.`, 'Say confirm calendar change.'], save }),
+    };
+    let speech = '';
+    env.deps.transcribe = async () => speech;
+    const chat = env.deps.chat = vi.fn(async function* (_messages, _signal, tools) {
+      if (tools?.[0]?.function.name === 'interpret_calendar_request') {
+        yield { type: 'tool_calls' as const, calls: [{ name: tools[0].function.name, id: 'calendar',
+          arguments: JSON.stringify({ action: speech.startsWith('Add') ? 'create' : 'list' }) }] };
+      } else {
+        yield '[neutral] I heard you.';
+      }
+    });
+    const session = new Session(env.socket, env.deps, 'calendar-test');
+    await session.handleText(hello);
+    async function say(text: string) {
+      speech = text;
+      env.advance(300);
+      await session.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+      utter(session, env);
+      await session.drain();
+    }
+    await say('What is on my calendar tomorrow?');
+    expect(env.sent).toContainEqual(expect.objectContaining({ type: 'info_card', card: expect.objectContaining({ kind: 'calendar' }) }));
+    expect(env.sent.some(event => event.state === 'sentence_start' && event.text.includes(title))).toBe(true);
+    const proposal = `Add ${title} to my calendar tomorrow at noon for an hour.`;
+    await say(proposal);
+    expect(save).not.toHaveBeenCalled();
+    await say('Yes.');
+    await say('Confirm calendar change.');
+    expect(save).not.toHaveBeenCalled();
+    await say(proposal);
+    await say('Cancel calendar change.');
+    expect(save).not.toHaveBeenCalled();
+    await say(proposal);
+    const called = chat.mock.calls.length;
+    await say('Confirm calendar change.');
+    await say('Confirm calendar change.');
+    expect(chat.mock.calls).toHaveLength(called);
+    expect(save).toHaveBeenCalledTimes(1);
+    await say(proposal);
+    env.advance(46_000);
+    await say('Confirm calendar change.');
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(env.sent.some(event => event.state === 'sentence_start' && event.text === 'Saved to your iCloud calendar.')).toBe(true);
+    expect(JSON.stringify(session.history)).not.toContain(title);
+    expect(env.logs.join('\n')).not.toContain(title);
+  });
+});
+
 describe('Word definition cards', () => {
   it('shows a definition card and speaks the same meaning without another model round', async () => {
     const env = makeEnv();
@@ -580,14 +639,15 @@ describe('Session robot tools', () => {
   const settle = () => new Promise<void>(r => setTimeout(r, 0));
 
   /** Answers the session's mcp initialize + tools/list so tools are known, and auto-replies to tools/call with `toolReply`. */
-  async function withTools(env: ReturnType<typeof makeEnv>, s: Session, toolReply: (name: string, args: any) => object | 'none') {
+  async function withTools(env: ReturnType<typeof makeEnv>, s: Session, toolReply: (name: string, args: any) => object | 'none',
+    extra: { name: string; description: string; inputSchema: object }[] = []) {
     const origSend = env.socket.sendText;
     env.socket.sendText = (j: any) => {
       origSend(j);
       if (j.type !== 'mcp') return;
       const p = j.payload;
       if (p.method === 'initialize') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, result: { protocolVersion: '2024-11-05' } } })), 0);
-      if (p.method === 'tools/list') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, result: { tools: [cameraTool, headTool, { name: 'self.reboot', description: 'r', inputSchema: {} }] } } })), 0);
+      if (p.method === 'tools/list') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, result: { tools: [cameraTool, headTool, ...extra, { name: 'self.reboot', description: 'r', inputSchema: {} }] } } })), 0);
       if (p.method === 'tools/call') {
         const reply = toolReply(p.params.name, p.params.arguments);
         if (reply !== 'none') setTimeout(() => void s.handleText(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: p.id, ...reply } })), 0);
@@ -595,24 +655,67 @@ describe('Session robot tools', () => {
     };
     await s.handleText(hello);
     for (let i = 0; i < 6 && s.mcp.tools.length === 0; i++) await settle();
-    expect(s.mcp.tools.map(t => t.name)).toEqual(['self.camera.take_photo', 'self.robot.set_head_angles']);
+    expect(s.mcp.tools.map(t => t.name)).toEqual(['self.camera.take_photo', 'self.robot.set_head_angles', ...extra.map(t => t.name)]);
     await s.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
   }
   const toolCalls = (calls: any[]) => ({ type: 'tool_calls' as const, calls });
   const sentences = (env: ReturnType<typeof makeEnv>) => env.sent.filter(m => m.type === 'tts' && m.state === 'sentence_start').map(m => m.text);
 
-  it('a photo turn: speaks the filler, calls take_photo on the robot, feeds the description back, speaks the answer', async () => {
+  it.each([['Set a 20-second timer', 1], ['Please don’t set a timer', 0], ['What timers are running?', 0]])(
+    'gates the local countdown tool and starts it at most once for %j', async (request, expectedCalls) => {
+    const env = makeEnv();
+    const name = 'self.robot.start_timer';
+    const call = vi.fn(() => ({ result: { content: [{ type: 'text', text: '1' }] } }));
+    env.deps.transcribe = async () => request;
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) {
+        yield toolCalls(['first', 'second'].map(id => ({ id, name, arguments: '{"duration_seconds":20}' })));
+      } else yield 'Ready.';
+    };
+    const session = new Session(env.socket, env.deps, 'test-timer');
+    await withTools(env, session, call, [{ name, description: 'countdown', inputSchema: {} }]);
+    utter(session, env);
+    await session.drain();
+    expect(call).toHaveBeenCalledTimes(expectedCalls);
+    if (expectedCalls) expect(call).toHaveBeenCalledWith(name, { duration_seconds: 20 });
+  });
+
+  it('emits a full reminder card from the device result', async () => {
+    const env = makeEnv();
+    const name = 'self.robot.get_reminders';
+    env.deps.transcribe = async () => 'What are my reminders?';
+    env.deps.chat = async function* (messages) {
+      if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'list', name, arguments: '{}' }]);
+      else yield 'There is one reminder.';
+    };
+    const session = new Session(env.socket, env.deps, 'test-reminders');
+    const payload = JSON.stringify([{ id: 1, message: 'Check the tea', remaining_ms: 19500, timer: true }]);
+    await withTools(env, session, () => ({ result: { content: [{ type: 'text', text: payload }] } }),
+      [{ name, description: 'reminders', inputSchema: {} }]);
+    utter(session, env);
+    await session.drain();
+    expect(env.sent).toContainEqual(expect.objectContaining({ type: 'info_card', card: expect.objectContaining({
+      kind: 'reminders', items: [{ title: 'Check the tea', detail: 'Timer', badge: '20s' }],
+    }) }));
+  });
+
+  it.each(['', '[happy] I have a good feeling about this. Give me a second. '])(
+    'speaks only the fixed camera announcement before calling take_photo (model preamble: %j)', async (preamble) => {
     const env = makeEnv();
     const rounds: any[][] = [];
     const toolsSeen: any[] = [];
     env.deps.chat = async function* (messages, _signal, tools) {
       rounds.push(messages); toolsSeen.push(tools);
-      if (!messages.some(m => m.role === 'tool')) yield toolCalls([{ id: 'c1', name: 'self.camera.take_photo', arguments: '{"question":"what is on the desk?"}' }]);
-      else { yield '[happy] A grey cat, judging '; yield 'me. '; }
+      if (!messages.some(m => m.role === 'tool')) {
+        if (preamble) yield preamble;
+        yield toolCalls([{ id: 'c1', name: 'self.camera.take_photo', arguments: '{"question":"what is on the desk?"}' }]);
+      } else { yield '[happy] A grey cat, judging '; yield 'me. '; }
     };
     const s = new Session(env.socket, env.deps, 'aa:bb');
     await withTools(env, s, (name, args) => {
       expect(name).toBe('self.camera.take_photo');
+      expect(sentences(env)).toEqual(['Let me look.']);
+      expect(env.sleeps.length).toBeGreaterThan(0);
       expect(args).toEqual({ question: 'what is on the desk?' });
       return { result: { content: [{ type: 'text', text: JSON.stringify({ success: true, text: 'A grey cat sits on a desk, staring at the camera.' }) }], isError: false } };
     });
@@ -828,6 +931,62 @@ describe('Session server tools', () => {
     ]);
     expect(env.sent.filter(m => m.type === 'info_card')).toHaveLength(1);
     expect(env.sent.at(-1)).toMatchObject({ type: 'tts', state: 'stop' });
+  });
+
+  it.each([
+    ['What’s the weather in London?', 'get_weather', 'Open-Meteo', false],
+    ['When is the next northbound bus arriving?', 'get_london_departures', 'TfL', true],
+    ['When is the next train from London Waterloo to Clapham Junction?', 'get_london_departures', 'National Rail', true],
+    ['What’s the weather in London?', 'get_weather', undefined, false],
+  ])('remembers the live lookup for %j after the answer and a reconnect', async (question, name, source, direct) => {
+    const env = makeEnv();
+    let transcript = question;
+    env.deps.transcribe = async () => transcript;
+    const run = vi.fn<NonNullable<SessionDeps['serverTools']>[number]['run']>(async (_args, _signal, display) => {
+      if (!source) throw new Error('Forecast feed unavailable');
+      display?.({ title: 'London', source, rows: ['Raw result details'] }, direct ? 'The next service is due shortly.' : undefined);
+      return 'Raw result details';
+    });
+    env.deps.serverTools = [{
+      timeoutMs: 1000, spec: { type: 'function', function: { name, description: 'Live lookup', parameters: {} } }, run,
+    }];
+    let followUpContext: unknown;
+    env.deps.chat = async function* (messages) {
+      if (transcript !== question) {
+        followUpContext = messages;
+        yield '[neutral] Here is how I checked.';
+      } else if (!messages.some(message => message.role === 'tool')) {
+        yield { type: 'tool_calls' as const, calls: [{ id: 'live', name, arguments: '{}' }] };
+      } else {
+        yield '[neutral] Here is the forecast result.';
+      }
+    };
+    async function say(session: Session) {
+      await session.handleText(hello);
+      env.advance(1000);
+      await session.handleText(JSON.stringify({ type: 'listen', state: 'start', mode: 'auto' }));
+      utter(session, env);
+      await session.drain();
+    }
+    const first = new Session(env.socket, env.deps, 'lookup-test');
+    await say(first);
+    transcript = 'Did that last answer come from a live lookup?';
+    const second = new Session(env.socket, env.deps, 'lookup-test', [...first.history]);
+    await say(second);
+    expect(followUpContext).toMatchObject([
+      { role: 'system', content: expect.stringContaining(`User message 1: ${name} ${source ? `returned data from ${source}` : 'failed'}.`) },
+      { role: 'user', content: question }, { role: 'assistant' }, { role: 'user', content: transcript },
+    ]);
+    expect(JSON.stringify(followUpContext)).not.toMatch(/Raw result details|Forecast feed unavailable|liveLookups/);
+    const topic = source === 'TfL' ? 'those bus times' : source === 'National Rail' ? 'those train times' : 'that forecast';
+    transcript = `Did you use a tool to check ${topic}?`;
+    followUpContext = undefined;
+    await say(new Session(env.socket, env.deps, 'lookup-test', first.history));
+    expect(followUpContext).toBeUndefined();
+    expect(env.sent.filter(event => event.state === 'sentence_start').at(-1)?.text).toBe(source
+      ? `Yes, I checked ${source} for that ${source === 'Open-Meteo' ? 'forecast' : 'departure information'}.`
+      : 'I tried the weather lookup, but it failed.');
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it('a failing or slow server tool becomes an Error tool result', async () => {

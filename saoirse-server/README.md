@@ -47,7 +47,7 @@ Then set `PUBLIC_WS_URL=wss://<your-host>/api/ws` and redeploy. To point the rob
 - `ECHO_GUARD_MS` (250): microphone audio ignored after `tts stop`. The robot only opens its microphone once it has switched back to listening, which happens after the stop that already trails playback by 500 ms, so this only needs to cover that switch. `WAKE_GUARD_MS` (800): audio ignored after the `listen start` that follows a wake word, while the robot plays its popup chime into the open microphone.
 - Every utterance is logged with its length and peak level (`utterance 1860 ms, peak rms 0.071: "..."`), including those the STT returned empty for.
 - Deadlines: `STT_TIMEOUT_MS` (10000, one transcription request), `LLM_TIMEOUT_MS` (15000, the whole reply stream including any fallback attempt), `TTS_TIMEOUT_MS` (10000, each sentence). Each bounds receiving the upstream response, not the time spent playing it out. A timeout ends the turn with a logged `process error` and, if speech had started, a `tts stop`. A barge-in (`abort`) or socket close cancels the turn's in-flight requests.
-- Robot tools: on each session the server sends MCP `initialize` (with the vision upload URL and token) and `tools/list`, and offers the tools in `DEVICE_TOOLS` (default: camera, head angles, light colour, reminders, device status, volume, screen brightness and theme; never reboot or firmware upgrade) to the LLM as function tools. A turn may take up to 4 LLM rounds (a relative change such as "louder" reads the device status first); a photo call is preceded by "Let me look." if the model said nothing first. `VISION_MODEL` (default `google/gemini-3.5-flash-lite`), `VISION_BASE_URL` / `VISION_API_KEY` (default: the LLM's), `VISION_TIMEOUT_MS` (15000), `VISION_MAX_BYTES` (3 MiB), `PUBLIC_VISION_URL` (default derived from `PUBLIC_WS_URL`), `TOOL_TIMEOUT_CAMERA_MS` (25000), `TOOL_TIMEOUT_MS` (8000).
+- Robot tools: on each session the server sends MCP `initialize` (with the vision upload URL and token) and `tools/list`, and offers the tools in `DEVICE_TOOLS` (default: camera, head angles, light colour, reminders, device status, volume, screen brightness and theme; never reboot or firmware upgrade) to the LLM as function tools. A turn may take up to 4 LLM rounds (a relative change such as "louder" reads the device status first); each photo call is preceded by the fixed line "Let me look." `VISION_MODEL` (default `google/gemini-3.5-flash-lite`), `VISION_BASE_URL` / `VISION_API_KEY` (default: the LLM's), `VISION_TIMEOUT_MS` (15000), `VISION_MAX_BYTES` (3 MiB), `PUBLIC_VISION_URL` (default derived from `PUBLIC_WS_URL`), `TOOL_TIMEOUT_CAMERA_MS` (25000), `TOOL_TIMEOUT_MS` (8000).
 - Server tools (`SERVER_TOOLS`, default `get_weather,web_search,calculate,convert_units`): weather from Open-Meteo (free, no key; home `WEATHER_PLACE` London at `WEATHER_LATITUDE`/`WEATHER_LONGITUDE`, other places geocoded), web search through `SEARCH_MODEL` (default `perplexity/sonar` on the LLM key, about half a cent per search; `SEARCH_TIMEOUT_MS` 15000), and an exact calculator and unit converter so she never does arithmetic herself.
 - `DEVICE_TZ` (default `UTC`): the robot's IANA time zone, e.g. `Europe/London`. It sets the OTA `timezone_offset` (the robot's clock; Vercel itself runs in UTC) and the `Current local time:` line appended to the system prompt.
 - `@discordjs/opus` is an optional dependency (native codec, opt-in via `OPUS_CODEC=native`); `npm install --omit=optional` skips it.
@@ -60,13 +60,33 @@ Specify a route, direction, stop letter, or stop code to narrow the predictions.
 TfL returns live arrivals and can report an empty board. These cards cover upcoming
 services rather than complete future-date timetables.
 
-National Rail uses the official Darwin public JSON station board. Set
-`DARWIN_AUTHORIZATION` in the production environment to the complete Basic
-Authorization header issued for the feed. Use the station's three-letter CRS
-code to disambiguate. If `SERVER_TOOLS` is overridden, include
-`get_london_departures` to enable the transport tool.
+“When is the next northbound bus arriving?” uses Elms Road / Windmill on the
+Common Stop C. Ask for the next southbound bus to use Stop J.
+
+National Rail uses the public Darwin station board. Subscribe to the Rail Data
+Marketplace's **Live Departure Board** and save its Consumer Key as the
+`RAIL_DATA_API_KEY` production secret. Existing direct Darwin connections can
+use `DARWIN_AUTHORIZATION` with the complete Basic Authorization header.
+Use a station's three-letter CRS code to disambiguate. If `SERVER_TOOLS` is
+overridden, include `get_london_departures` to enable the transport tool.
 
 `LOG_CONVERSATION=true` opts into logging transcripts and tool details. By
 default the server logs timings and tool outcomes. `SPEECH_GAIN` sets the
 speech signal gain (1.25 by default, 1 disables amplification). The robot's
 speaker volume remains separately adjustable by voice or in its settings.
+
+## iCloud Calendar
+
+In the `saoirse-server` project, add the following to the Production environment and deploy the updated server:
+
+| Name | Value |
+| --- | --- |
+| `ICLOUD_CALENDAR_NAME` | The exact name of one existing iCloud calendar |
+| `ICLOUD_CALENDAR_ACCOUNT` | Your Apple Account email address, stored as a Secret |
+| `ICLOUD_CALENDAR_APP_PASSWORD` | An [Apple app-specific password](https://support.apple.com/en-us/102654), stored as a Secret |
+
+For a local run, use `.env.local`. `SAOIRSE_DEVICE_TOKEN` protects the voice connection and `OTA_SECRET` protects the endpoint that hands out that token. Both are required when the calendar is enabled. Use `DEVICE_TZ` for local dates and times. Remove `ICLOUD_CALENDAR_NAME` and redeploy to disable the feature.
+
+Try “What’s on my calendar tomorrow?” or “Add piano practice to my calendar tomorrow from three to four in the afternoon.” To edit a one-off event without guests, give its current title and date, then say what should change. After hearing the preview, say “confirm calendar change” within 45 seconds to save it. Say “cancel calendar change” to discard it. A different request discards the pending change.
+
+The Apple credential stays on the server. Calendar results go to the robot display and the existing speech synthesis service. The language model interprets calendar requests from speech transcripts. Event results are kept out of the language model’s input and normal conversation history.

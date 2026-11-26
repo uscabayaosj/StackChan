@@ -1,9 +1,33 @@
+export const ELMS_ROAD = 'Elms Road / Windmill on the Common';
+export const ELMS_ROAD_STOPS = {
+  northbound: { id: '490006520N', letter: 'C' },
+  southbound: { id: '490006520S', letter: 'J' },
+} as const;
+
+export const LOCAL_RAIL_STATIONS = {
+  WAT: 'London Waterloo',
+  CLJ: 'Clapham Junction',
+} as const;
+
+export function parseRailRequest(text: string) {
+  const request = /^(?:please,?\s+)?(?:(?:show me|tell me|check|find|when is|what is|(?:when|what)['’]s|when)\s+)?(?:the\s+)?(?:next\s+|live\s+)?trains?\s+from\s+((?:London\s+)?Waterloo|Clapham\s+Junction)\s+to\s+((?:London\s+)?Waterloo|Clapham\s+Junction)(?:\s+(?:is|leaves|departs))?(?:,?\s+please)?[.!?]*$/i.exec(text.trim());
+  if (!request) return;
+  const stop = /waterloo$/i.test(request[1]) ? 'WAT' : 'CLJ';
+  const destination_crs = /waterloo$/i.test(request[2]) ? 'WAT' : 'CLJ';
+  if (stop !== destination_crs) return { mode: 'rail', stop, destination_crs };
+}
+
 /** Keep exact stop names and resolve short corrections against the current bus board. */
 export function parseBusRequest(text: string, previous?: Record<string, unknown>): Record<string, unknown> | undefined {
   const words = text.trim().replace(/[?.!]+$/, '');
   if (/\b(?:tomorrow|next week|first|last)\b|\b(?:at|after|before)\s+\d/i.test(words)) return;
   const request = /^(?:please,?\s+)?(?:(?:show me|tell me|check|find|what are|when are|when is)\s+)?(?:the\s+)?(?:next\s+|live\s+)?(?:buses|bus)\b(?:\s+(?:arrivals|departures|schedules?|times))?\s+(?:at|from)\s+(.+)$/i.exec(words);
   if (request) return { mode: 'bus', stop: request[1] };
+  const local = /^(?:please,?\s+)?(?:(?:show me|tell me|check|find|what (?:is|are)|when (?:is|are|will)|(?:what|when)['’]s)\s+)?(?:the\s+)?(?:next\s+|live\s+)?(north|south)[\s-]*bound\s+bus(?:es)?(?:\s+(?:arriv(?:e|ing|als?)|coming|due|departures|times))?(?:,?\s+please)?$/i.exec(words);
+  if (local) {
+    const { letter } = local[1].toLowerCase() === 'north' ? ELMS_ROAD_STOPS.northbound : ELMS_ROAD_STOPS.southbound;
+    return { mode: 'bus', stop: ELMS_ROAD, letter };
+  }
   if (!previous || previous.mode !== 'bus' || typeof previous.stop !== 'string') return;
   const route = /^(?:(?:and|what about|how about|only)\s+)?(?:(?:the|route|bus)\s+)?([a-z]?\d{1,3})$/i.exec(words);
   const direction = /^(?:(?:and|what about|how about)\s+)?towards?\s+(.+)$/i.exec(words);
