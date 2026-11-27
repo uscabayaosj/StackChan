@@ -40,10 +40,17 @@ patch --dry-run -p1 < /path/to/saoirse-companion.patch
 patch -p1 < /path/to/saoirse-companion.patch
 patch --dry-run -p1 < /path/to/saoirse-speaker-follow.patch
 patch -p1 < /path/to/saoirse-speaker-follow.patch
+patch --dry-run -p1 < /path/to/saoirse-plush-face.patch
+patch -p1 < /path/to/saoirse-plush-face.patch
+cp /path/to/plush-face/saoirse_plush.bin main/assets/
 idf.py reconfigure build
 ```
 
 The second [firmware patch](firmware/saoirse-speaker-follow.patch) adds speaker following and the current audio, Wi-Fi and settings readback updates. Start with a clean build directory so ESP-IDF uses the patched memory defaults. The dependency lock pins Espressif’s two-stage MSR/MNP human face detector for the ESP32-S3.
+
+The [plush face patch](firmware/saoirse-plush-face.patch) brings the 3D-rendered avatar to the CoreS3 in firmware 1.6.25. Its earcups light up in Listening. In Speaking, the mouth and mic glow follow the speaker’s playback level. The head tilts between poses while the shoulders stay level. The sprite pack expands once into PSRAM when the avatar opens. During speech, the display redraws small face and headset regions as their appearance changes. The previous Phosphor face is the fallback if the pack fails to load.
+
+To regenerate the sprite pack from the approved [source poses](firmware/plush-face/source.png), run `python3 companion/firmware/plush-face/render.py /path/to/output` with Pillow installed. Copy the resulting `saoirse_plush.bin` to `firmware/main/assets/` and `plush_frames.h` to `firmware/main/stackchan/avatar/skins/saoirse/`.
 
 On boot and reconnect, Saoirse ranks compatible saved Wi-Fi networks and mesh access points by their measured signal. An exact tie can retain the saved preference. While idle, Saoirse checks every 45 seconds. If another saved access point is stronger, she checks again after five seconds before switching. Voice sessions and camera streams defer these background checks to preserve playback.
 
