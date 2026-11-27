@@ -19,7 +19,7 @@ struct CameraView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 ZStack {
-                    Color(red: 0.025, green: 0.055, blue: 0.045)
+                    if frame == nil { SaoirseTheme.stage } else { Color.black }
                     if let frame {
                         Image(uiImage: frame).resizable().scaledToFit()
                             .accessibilityLabel(receivingLive ? "Saoirse’s live camera" : "Photo from Saoirse")
@@ -28,17 +28,17 @@ struct CameraView: View {
                             Image(systemName: "camera").font(.largeTitle).accessibilityHidden(true)
                             Text(operation == .idle ? "Camera off" : "Opening camera…").font(.headline)
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(SaoirseTheme.stageText)
                     }
                 }
                 .aspectRatio(4 / 3, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .clipShape(.rect(cornerRadius: SaoirseTheme.radius))
                 .overlay(alignment: .topLeading) {
                     if receivingLive {
                         Label("Live", systemImage: "record.circle.fill")
                             .padding(.horizontal, 11).padding(.vertical, 7)
                             .font(.subheadline.bold()).foregroundStyle(.white)
-                            .background(Color(red: 0.64, green: 0.12, blue: 0.18), in: Capsule())
+                            .background(SaoirseTheme.live, in: Capsule())
                             .padding(12)
                     }
                 }
@@ -66,8 +66,10 @@ struct CameraView: View {
                     }
                 }
             }
-            .padding(.horizontal, 24).padding(.bottom, 24)
+            .padding(.horizontal, SaoirseTheme.inset)
+            .padding(.bottom, SaoirseTheme.inset)
         }
+        .saoirseCanvas()
         .navigationTitle("Camera")
         .task(id: operation) {
             guard operation != .idle else { return }

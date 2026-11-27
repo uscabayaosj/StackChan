@@ -20,6 +20,7 @@ struct SettingsView: View {
                     Label("AI profiles", systemImage: "slider.horizontal.3")
                 }
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section("Remote access") {
                 if let relay = device.pairing?.server.host() {
                     LabeledContent("Relay", value: relay)
@@ -30,7 +31,9 @@ struct SettingsView: View {
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }
+            .listRowBackground(SaoirseTheme.surface)
         }
+        .saoirseGroupedCanvas()
         .navigationTitle("Settings")
         .alert("Remove this pairing?", isPresented: $unpairing) {
             Button("Remove", role: .destructive) {
@@ -57,6 +60,7 @@ private struct ProfilesView: View {
         List {
             if device.client == nil {
                 Button("Pair Saoirse", systemImage: "link", action: pair)
+                    .listRowBackground(SaoirseTheme.surface)
             } else if let archive {
                 let active = archive.profiles.first { $0.id == archive.active }
                 Section {
@@ -65,6 +69,7 @@ private struct ProfilesView: View {
                         Button("Restore server default") { Task { await activate(nil) } }.disabled(busy)
                     }
                 } header: { Text("Active profile") } footer: { Text("Changes take effect the next time Saoirse starts a conversation.") }
+                .listRowBackground(SaoirseTheme.surface)
                 Section {
                     Button("New profile", systemImage: "plus") {
                         var defaults = active?.profile ?? archive.defaults
@@ -79,13 +84,17 @@ private struct ProfilesView: View {
                         }
                     }
                 } header: { Text("Saved versions") }
+                .listRowBackground(SaoirseTheme.surface)
             } else if problem == nil {
                 ProgressView("Loading profiles…")
+                    .listRowBackground(SaoirseTheme.surface)
             } else {
                 Button("Try again") { Task { await reload() } }
+                    .listRowBackground(SaoirseTheme.surface)
             }
-            if let problem { Text(problem).foregroundStyle(.red) }
+            if let problem { Text(problem).foregroundStyle(.red).listRowBackground(SaoirseTheme.surface) }
         }
+        .saoirseGroupedCanvas()
         .navigationTitle("AI profiles")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await reload() }
@@ -117,13 +126,16 @@ private struct ProfilesView: View {
                 LabeledContent("Connection", value: backendLabel(saved.profile.backend))
                 LabeledContent("Model", value: saved.profile.model)
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section("Voice") {
                 LabeledContent("ElevenLabs voice ID", value: saved.profile.voiceId)
                 LabeledContent("Speech model", value: saved.profile.voiceModel)
                 LabeledContent("Speech gain", value: saved.profile.gain.formatted())
             }
+            .listRowBackground(SaoirseTheme.surface)
             if !saved.profile.persona.isEmpty {
                 Section("Persona") { Text(saved.profile.persona).textSelection(.enabled) }
+                    .listRowBackground(SaoirseTheme.surface)
             }
             Section {
                 if active { Label("Active profile", systemImage: "checkmark.circle.fill") }
@@ -134,7 +146,9 @@ private struct ProfilesView: View {
                 }
                 if let problem { Text(problem).foregroundStyle(.red) }
             }
+            .listRowBackground(SaoirseTheme.surface)
         }
+        .saoirseGroupedCanvas()
         .navigationTitle(saved.profile.name)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -212,33 +226,42 @@ private struct ProfileEditor: View {
         NavigationStack {
             Form {
                 Section("Version") { TextField("Profile name", text: $profile.name) }
+                    .listRowBackground(SaoirseTheme.surface)
                 Section {
                     Picker("Connection", selection: $profile.backend) {
                         ForEach(backends, id: \.self) { Text(backendLabel($0)).tag($0) }
                     }
                     TextField("Model ID", text: $profile.model).textInputAutocapitalization(.never).autocorrectionDisabled()
                 } header: { Text("LLM backend") } footer: { Text("Connections and provider keys are configured on the relay.") }
+                .listRowBackground(SaoirseTheme.surface)
                 Section("Voice") {
                     TextField("ElevenLabs voice ID", text: $profile.voiceId).textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("Speech model ID", text: $profile.voiceModel).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Stepper("Speech gain \(profile.gain.formatted(.number.precision(.fractionLength(2))))×",
                             value: $profile.gain, in: 0.5...2, step: 0.05)
                 }
+                .listRowBackground(SaoirseTheme.surface)
                 Section {
                     TextField("How should Saoirse speak and act?", text: $profile.persona, axis: .vertical)
                         .lineLimit(4...8).accessibilityLabel("Persona instructions")
                 } header: { Text("Persona") } footer: { Text("Adds instructions to Saoirse’s existing persona.") }
-                if let problem { Section { Text(problem).foregroundStyle(.red) } }
-                if saving { ProgressView("Saving…") }
+                .listRowBackground(SaoirseTheme.surface)
+                if let problem {
+                    Section { Text(problem).foregroundStyle(.red) }.listRowBackground(SaoirseTheme.surface)
+                }
+                if saving { ProgressView("Saving…").listRowBackground(SaoirseTheme.surface) }
                 if saved {
                     Button("Done") { dismiss() }
+                        .listRowBackground(SaoirseTheme.surface)
                 } else {
                     Section {
                         Button("Save and use") { submit(true) }.disabled(!canSave)
                         Button("Save version only") { submit(false) }.disabled(!canSave)
                     }
+                    .listRowBackground(SaoirseTheme.surface)
                 }
             }
+            .saoirseGroupedCanvas()
             .navigationTitle("Save AI profile")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(saving)

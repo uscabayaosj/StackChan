@@ -53,6 +53,8 @@ The [plush face patch](firmware/saoirse-plush-face.patch) brings the 3D-rendered
 
 Firmware 1.6.26 adds a reaction to a stroke or a hand resting on the head. In AI Agent standby, her cheeks flush while she giggles and a glossy heart floats up and fades. Rapid repeat strokes share a short cooldown. During a conversation the cheeks and heart give quiet feedback. A new voice connection clears the idle giggle before it starts listening.
 
+Firmware 1.6.27 uses the standby gaze animation to look left, right and up. In Listening, the eyes open wider and hold a forward gaze as speaker tracking aims the head. In Speaking, a smile in the eyes follows the playback emphasis. Blinks are shorter and less frequent. The sleepy expression keeps the eyes partly open, and the giggle uses one brief eye squeeze.
+
 To regenerate the sprites from the approved [source poses](firmware/plush-face/source.png), run `python3 companion/firmware/plush-face/render.py /path/to/output` with Pillow installed. Copy `saoirse_plush.bin` to `firmware/main/assets/` and `plush_frames.h` to `firmware/main/stackchan/avatar/skins/saoirse/`. To regenerate the embedded giggle, run `python3 companion/firmware/plush-face/render_giggle.py /path/to/saoirse_giggle.ogg` with FFmpeg and libopus installed.
 
 On boot and reconnect, Saoirse ranks compatible saved Wi-Fi networks and mesh access points by their measured signal. An exact tie can retain the saved preference. While idle, Saoirse checks every 45 seconds. If another saved access point is stronger, she checks again after five seconds before switching. Voice sessions and camera streams defer these background checks to preserve playback.

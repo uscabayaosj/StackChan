@@ -21,6 +21,7 @@ struct HistoryView: View {
                 } actions: {
                     Button("Pair Saoirse", action: pair).buttonStyle(.borderedProminent)
                 }
+                .saoirseCanvas()
             } else {
                 List {
                     if let page {
@@ -30,17 +31,24 @@ struct HistoryView: View {
                         } footer: {
                             Text("New transcripts are stored on your relay when this is on. Calendar exchanges are omitted.")
                         }
+                        .listRowBackground(SaoirseTheme.surface)
                     }
-                    if let problem { Section { Text(problem).foregroundStyle(.red) } }
+                    if let problem {
+                        Section { Text(problem).foregroundStyle(.red) }
+                            .listRowBackground(SaoirseTheme.surface)
+                    }
                     if page == nil && problem != nil {
                         Button("Try again") { Task { await reload() } }.disabled(working)
+                            .listRowBackground(SaoirseTheme.surface)
                     } else if page == nil {
                         ProgressView("Loading conversations…")
+                            .listRowBackground(SaoirseTheme.surface)
                     } else if dayGroups.isEmpty {
                         Section {
                             Text(search.isEmpty ? "No archived conversations yet." : "No matches in loaded conversations.")
                                 .foregroundStyle(.secondary)
                         }
+                        .listRowBackground(SaoirseTheme.surface)
                     }
                     ForEach(dayGroups, id: \.day) { group in
                         Section(group.day.formatted(.dateTime.weekday(.wide).month(.wide).day())) {
@@ -60,9 +68,11 @@ struct HistoryView: View {
                                 }
                             }
                         }
+                        .listRowBackground(SaoirseTheme.surface)
                     }
                     if let before = page?.next {
                         Button("Load older conversations") { Task { await reload(before: before) } }.disabled(working)
+                            .listRowBackground(SaoirseTheme.surface)
                     }
                 }
                 .searchable(text: $search, prompt: "Search loaded transcripts")
@@ -79,6 +89,7 @@ struct HistoryView: View {
                         }
                     }
                 }
+                .saoirseGroupedCanvas()
             }
         }
         .navigationTitle("History")
@@ -174,8 +185,10 @@ private struct ConversationDetail: View {
                         else { Text(turn.reply).textSelection(.enabled) }
                     }
                 }
+                .listRowBackground(SaoirseTheme.surface)
             }
         }
+        .saoirseGroupedCanvas()
         .navigationTitle("Conversation")
         .navigationBarTitleDisplayMode(.inline)
     }

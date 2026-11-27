@@ -20,7 +20,7 @@ struct LatestDirectionsView: View {
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: route?.mode.symbol ?? "map")
-                            .font(.title2).foregroundStyle(companionTint)
+                            .font(.title2).foregroundStyle(SaoirseTheme.action)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Latest directions").font(.subheadline).foregroundStyle(.secondary)
                             if let route {
@@ -28,7 +28,7 @@ struct LatestDirectionsView: View {
                                 Text(route.summary).font(.subheadline).foregroundStyle(.secondary)
                             } else if let problem {
                                 Text(problem).font(.subheadline)
-                                Text("Try again").foregroundStyle(companionTint)
+                                Text("Try again").foregroundStyle(SaoirseTheme.action)
                             } else {
                                 ProgressView().accessibilityLabel("Loading route")
                             }
@@ -39,7 +39,7 @@ struct LatestDirectionsView: View {
                     }
                     .multilineTextAlignment(.leading)
                     .padding(16)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                    .background(SaoirseTheme.surface, in: .rect(cornerRadius: SaoirseTheme.radius))
                 }
                 .buttonStyle(.plain)
                 .disabled(route == nil && problem == nil)
@@ -104,13 +104,13 @@ private struct RouteSheet: View {
                         if route.originPoint != nil || route.destinationPoint != nil || !coordinates.isEmpty {
                             Map {
                                 if coordinates.count > 1 {
-                                    MapPolyline(coordinates: coordinates).stroke(companionTint, lineWidth: 5)
+                                    MapPolyline(coordinates: coordinates).stroke(SaoirseTheme.action, lineWidth: 5)
                                 }
                                 if let point = route.originPoint {
                                     Marker(route.origin, systemImage: "circle", coordinate: point.coordinate).tint(.blue)
                                 }
                                 if let point = route.destinationPoint {
-                                    Marker(route.destination, systemImage: "flag.fill", coordinate: point.coordinate).tint(companionTint)
+                                    Marker(route.destination, systemImage: "flag.fill", coordinate: point.coordinate).tint(SaoirseTheme.action)
                                 }
                             }
                             .frame(height: max(160, min(size.size.height * 0.42, 380)))
@@ -151,7 +151,7 @@ private struct RouteSheet: View {
                             }
                             ForEach(Array(route.steps.enumerated()), id: \.offset) { index, step in
                                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                    Text("\(index + 1)").monospacedDigit().foregroundStyle(companionTint)
+                                    Text("\(index + 1)").monospacedDigit().foregroundStyle(SaoirseTheme.action)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(step.instruction)
                                         if let distance = step.distanceMeters {
@@ -167,6 +167,7 @@ private struct RouteSheet: View {
                     .padding()
                 }
             }
+            .saoirseCanvas()
             .navigationTitle("Route overview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

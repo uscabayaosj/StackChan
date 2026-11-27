@@ -15,7 +15,7 @@ from render_giggle import BEATS, DURATION_MS
 SIZE = (320, 240)
 BOUNDS = (0, 0, *SIZE)
 HEAD = (20, 2, 300, 184)
-EYES = (106, 88, 214, 128)
+EYES = (96, 84, 224, 130)
 MOUTH = (140, 116, 180, 146)
 MIC = (104, 145, 152, 175)
 CHEEK = (92, 116, 136, 148)
@@ -137,6 +137,32 @@ def delighted_eyes(blink):
     return delighted
 
 
+def open_gaze(face, dx=0, dy=0, height=1.0, width=1.0):
+    """Move the dark bead eyes while retaining the original catchlights and fabric shading."""
+    result = face.copy()
+    for box in ((109, 99, 137, 128), (182, 99, 211, 128)):
+        x0, y0, x1, y1 = box
+        pupil = face.crop(box)
+        alpha = pupil.getchannel("R").point(lambda v: round(255 * smooth((183 - v) / 114)))
+        # Close the small holes caused by the white catchlights inside the eye.
+        alpha = alpha.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
+        skin = Image.new("RGB", pupil.size)
+        skin.putdata([
+            tuple(round(top + (bottom - top) * (y - y0) / (y1 - y0)) for top, bottom in
+                  zip(face.getpixel((x, y0)), face.getpixel((x, y1))))
+            for y in range(y0, y1) for x in range(x0, x1)
+        ])
+        erase = alpha.point(lambda v: 255 if v > 10 else 0).filter(ImageFilter.MaxFilter(3))
+        result.paste(skin, (x0, y0), erase.filter(ImageFilter.GaussianBlur(0.55)))
+
+        size = round(pupil.width * width), round(pupil.height * height)
+        pupil.putalpha(alpha)
+        lifted = pupil.resize(size, Image.Resampling.BICUBIC)
+        target = x0 + dx + (pupil.width - lifted.width) // 2, y0 + dy + (pupil.height - lifted.height) // 2
+        result.paste(lifted, target, lifted.getchannel("A"))
+    return result
+
+
 def render(atlas):
     if atlas.size != (2 * SIZE[0], 2 * SIZE[1]):
         raise ValueError("Expected a 640 × 480 contact sheet in standby/speaking/blink/thinking order")
@@ -144,7 +170,8 @@ def render(atlas):
         atlas.crop((x, y, x + SIZE[0], y + SIZE[1]))
         for y in (0, SIZE[1]) for x in (0, SIZE[0])
     )
-    listen = glow(glow(base, 53, 121, 26, 42, 1), 267, 121, 26, 42, 1)
+    focused = open_gaze(base, dy=-1, height=1.20, width=1.04)
+    listen = glow(glow(focused, 53, 121, 26, 42, 1), 267, 121, 26, 42, 1)
     listen_pose = head_pose(base, listen, -2.0, 1.019, 0.5, -1.4)
     listen_blink = masked_tile(listen_pose, head_pose(base, blink, -2.0, 1.019, 0.5, -1.4), EYES, 5)
 
@@ -152,6 +179,7 @@ def render(atlas):
         return head_pose(base, face, 2.1, 1.016)
 
     reply = reply_pose(base)
+    happy = open_gaze(base, dy=-1, height=0.78, width=1.08)
     curious = reply_pose(thinking)
     think = masked_tile(masked_tile(reply, curious, EYES, 5), curious, MOUTH, 5)
 
@@ -175,10 +203,16 @@ def render(atlas):
         ("Blink", EYES, masked_tile(base, blink, EYES, 5)),
         ("ListeningBlink", EYES, listen_blink),
         ("CuriousEyes", EYES, masked_tile(base, thinking, EYES, 5)),
+        ("GlanceLeft", EYES, open_gaze(base, dx=-9, dy=-1)),
+        ("GlanceRight", EYES, open_gaze(base, dx=9, dy=-1)),
+        ("GlanceUp", EYES, open_gaze(base, dy=-7, height=1.06)),
+        ("SoftEyes", EYES, open_gaze(base, dy=1, height=0.58)),
+        ("HappyEyes", EYES, happy),
         ("AngryEyes", EYES, angry),
         ("Frown", MOUTH, masked_tile(base, thinking, MOUTH, 7)),
         ("Smile", MOUTH, masked_tile(base, small, MOUTH, 7)),
         ("ReplyEyes", EYES, reply),
+        ("ReplySmileEyes", EYES, reply_pose(happy)),
         ("ReplyBlink", EYES, masked_tile(reply, reply_pose(blink), EYES, 5)),
         ("ClosedMouth", MOUTH, reply),
         ("SmallMouth", MOUTH, masked_tile(reply, reply_pose(small), MOUTH, 7)),

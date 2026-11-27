@@ -1,10 +1,5 @@
 import SwiftUI
 
-let companionTint = Color(uiColor: UIColor { traits in
-    traits.userInterfaceStyle == .dark ? UIColor(red: 0.43, green: 0.83, blue: 0.69, alpha: 1) :
-        UIColor(red: 0.03, green: 0.38, blue: 0.30, alpha: 1)
-})
-
 @main
 struct SaoirseApp: App {
     var body: some Scene {
@@ -40,8 +35,8 @@ private struct CompanionTabs: View {
             }
             .tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
         }
-        .tint(companionTint)
         .sheet(isPresented: $pairing) { PairingView(device: device) }
+        .tint(SaoirseTheme.action)
         .task(id: scenePhase == .active ? device.pairing : nil) {
             if scenePhase == .active { await device.monitor() }
         }
@@ -70,8 +65,12 @@ struct PairingView: View {
                 } footer: {
                     Text("Use the address and companion token from your Saoirse relay. Pairing works even if the robot is offline.")
                 }
+                .listRowBackground(SaoirseTheme.surface)
 
-                if let error { Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.red) } }
+                if let error {
+                    Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.red) }
+                        .listRowBackground(SaoirseTheme.surface)
+                }
                 Section {
                     Button {
                         connecting = true
@@ -84,7 +83,9 @@ struct PairingView: View {
                     }
                     .disabled(address.isEmpty || token.isEmpty || connecting)
                 }
+                .listRowBackground(SaoirseTheme.surface)
             }
+            .saoirseGroupedCanvas()
             .navigationTitle("Pair Saoirse")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
@@ -146,8 +147,10 @@ struct ControlView: View {
                                  reported: device.status?.brightness, draft: $brightnessDraft)
                 }
             }
-            .padding(.horizontal, 24).padding(.bottom, 24)
+            .padding(.horizontal, SaoirseTheme.inset)
+            .padding(.bottom, SaoirseTheme.inset)
         }
+        .saoirseCanvas()
         .navigationTitle("Saoirse")
         .toolbar { if pending != nil { ToolbarItem { ProgressView().accessibilityLabel("Sending command") } } }
         .onChange(of: device.pairing) {
@@ -261,40 +264,62 @@ private struct ConnectionFace: View {
     let device: CompanionState
     let pair: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ScaledMetric(relativeTo: .title2) private var eyeWidth = 27.0
-    @ScaledMetric(relativeTo: .title2) private var eyeHeight = 38.0
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(spacing: 15) {
-            HStack(spacing: 19) {
-                ForEach(0..<2) { _ in
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color(red: 0.66, green: 0.99, blue: 0.62))
-                        .frame(width: min(eyeWidth, 54), height: device.online ? min(eyeHeight, 68) : 7)
-                        .frame(height: min(eyeHeight, 68))
-                }
-            }
-            .accessibilityHidden(true)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: device.online)
+        let vertical = typeSize >= .xxLarge
+        let layout = vertical ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) :
+            AnyLayout(HStackLayout(spacing: 14))
+        layout {
+            Image("SaoirsePortrait")
+                .resizable().scaledToFill()
+                .frame(width: 138, height: 114)
+                .clipped()
+                .clipShape(.rect(cornerRadius: 10))
+                .accessibilityHidden(true)
+            connectionDetails
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(14)
+        .background(SaoirseTheme.stage, in: .rect(cornerRadius: SaoirseTheme.radius))
+    }
+
+    private var connectionDetails: some View {
+        VStack(alignment: .leading, spacing: 7) {
             if device.pairing == nil {
-                Button(action: pair) { Label("Pair Saoirse", systemImage: "link") }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.76, green: 1, blue: 0.71))
-                    .foregroundStyle(Color(red: 0.04, green: 0.16, blue: 0.12))
-                    .controlSize(.large)
+                Button(action: pair) { Text("Pair Saoirse") }
+                    .buttonStyle(.bordered).controlSize(.large)
+                    .tint(SaoirseTheme.stageStatus)
+                    .foregroundStyle(SaoirseTheme.stageText)
             } else {
-                Text(device.connectionLabel).font(.headline).foregroundStyle(.white)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: statusIcon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(device.online ? SaoirseTheme.stageStatus : SaoirseTheme.stageSecondary)
+                        .accessibilityHidden(true)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: device.online)
+                    Text(statusTitle).font(.headline)
+                        .foregroundStyle(SaoirseTheme.stageText)
+                }
+                .accessibilityAddTraits(.updatesFrequently)
             }
             if let problem = device.connectionProblem {
-                Text(problem).font(.footnote).foregroundStyle(Color(red: 0.78, green: 0.89, blue: 0.82))
+                Text(problem).font(.footnote).foregroundStyle(SaoirseTheme.stageSecondary)
             } else if let lastSeen = device.status?.lastSeen, !device.online {
-                Text("Last seen \(lastSeen, style: .relative) ago").font(.footnote)
-                    .foregroundStyle(Color(red: 0.78, green: 0.89, blue: 0.82))
+                Text("Last seen \(lastSeen, style: .relative) ago")
+                    .font(.footnote).foregroundStyle(SaoirseTheme.stageSecondary)
             }
         }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(23)
-        .background(Color(red: 0.035, green: 0.13, blue: 0.105), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var statusTitle: String {
+        if device.connectionProblem != nil || device.status == nil { return device.connectionLabel }
+        return device.online ? "Online" : "Offline"
+    }
+
+    private var statusIcon: String {
+        if device.connectionProblem != nil { return "exclamationmark.circle" }
+        if device.status == nil { return "ellipsis.circle" }
+        return device.online ? "checkmark.circle.fill" : "circle"
     }
 }

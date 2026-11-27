@@ -15,6 +15,7 @@ struct WiFiSetupView: View {
                 Text("On the robot, open Settings → Wi-Fi → Change Wi-Fi and tap Next. Then tap a saved network below.")
                     .foregroundStyle(.secondary)
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section {
                 ForEach(networks.profiles) { profile in
                     HStack {
@@ -42,6 +43,7 @@ struct WiFiSetupView: View {
             } header: { Text("Saved networks") } footer: {
                 Text("Passwords are stored in this iPhone’s Keychain. For Saoirse, turn on Personal Hotspot and Maximise Compatibility first. UCL eduroam needs the updated robot firmware.")
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section("StackChan") {
                 ForEach(bluetooth.devices) { device in
                     Button { bluetooth.select(device) } label: {
@@ -64,6 +66,7 @@ struct WiFiSetupView: View {
                     Button("Cancel") { self.pending = nil }
                 }
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section {
                 Label(bluetooth.message, systemImage: statusIcon)
                     .foregroundStyle(bluetooth.phase == .success ? .green : .primary)
@@ -78,11 +81,13 @@ struct WiFiSetupView: View {
                     Button("Change network again") { bluetooth.disconnect(); bluetooth.findDevices() }
                 }
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section {
                 Button("Add saved network", systemImage: "plus") {
                     editing = NetworkProfile(id: UUID().uuidString, ssid: "")
                 }
             }
+            .listRowBackground(SaoirseTheme.surface)
             Section {
                 TextField("Wi-Fi name", text: $manual.ssid)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -94,7 +99,9 @@ struct WiFiSetupView: View {
                     .disabled(manual.ssid.isEmpty || bluetooth.isBusy)
                     .accessibilityIdentifier("connectWiFi")
             } header: { Text("Other network") } footer: { Text("Use a 2.4 GHz network. These manual details are not saved.") }
+            .listRowBackground(SaoirseTheme.surface)
         }
+        .saoirseGroupedCanvas()
         .navigationTitle("Wi-Fi networks")
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
@@ -159,13 +166,16 @@ private struct WiFiProfileEditor: View {
                     Text("Saved only in this iPhone’s Keychain. Sent directly to your robot over Bluetooth when you connect.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if let error { Text(error).foregroundStyle(.red) }
+                .listRowBackground(SaoirseTheme.surface)
+                if let error { Text(error).foregroundStyle(.red).listRowBackground(SaoirseTheme.surface) }
                 if saved {
                     Button("Forget saved details", role: .destructive) {
                         do { try forget(); dismiss() } catch { self.error = error.localizedDescription }
                     }
+                    .listRowBackground(SaoirseTheme.surface)
                 }
             }
+            .saoirseGroupedCanvas()
             .navigationTitle(profile.ssid.isEmpty ? "Add Wi-Fi network" : "Edit Wi-Fi network")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

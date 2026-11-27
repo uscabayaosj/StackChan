@@ -10,6 +10,7 @@
 		130873D470B9C156C64A8A1F /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA47BF08767E69A4A72A47B /* CameraView.swift */; };
 		1E023C1423FE3E6A43539347 /* CompanionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E081B21364C40F75A81632 /* CompanionClient.swift */; };
 		21FB53504E9864F175DCFAD3 /* WiFiSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06A14EBD8BEFEE55FBD3494 /* WiFiSetupView.swift */; };
+		2FE1AEBE7480BB2B504EE150 /* SaoirseTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E479F4A8194EAC13A984CBC4 /* SaoirseTheme.swift */; };
 		3A7B401C87B020A22E58559B /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03BAAB076747C9D1F5941F5 /* HistoryView.swift */; };
 		40C9E181A9340E33C0877B4C /* DirectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0861FE70A13A8CD5781FBA0D /* DirectionsView.swift */; };
 		5405F9A3D25258F1686C616E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DCC2C94EA50A2E76550DD88B /* Assets.xcassets */; };
@@ -36,6 +37,7 @@
 		D03BAAB076747C9D1F5941F5 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		D4BB2C377171DD142FB8E730 /* WiFiProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiProtocol.swift; sourceTree = "<group>"; };
 		DCC2C94EA50A2E76550DD88B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E479F4A8194EAC13A984CBC4 /* SaoirseTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaoirseTheme.swift; sourceTree = "<group>"; };
 		FAA47BF08767E69A4A72A47B /* CameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -50,6 +52,7 @@
 				D03BAAB076747C9D1F5941F5 /* HistoryView.swift */,
 				31F5ECD32F93ABB36BCC2CAB /* NetworkProfileStore.swift */,
 				18888CFC22DF5D2498C14E27 /* SaoirseApp.swift */,
+				E479F4A8194EAC13A984CBC4 /* SaoirseTheme.swift */,
 				3EEE9FB88704A60D5CE3ACB4 /* SettingsView.swift */,
 				9D08CD9CEF975E82497FEA7A /* StackChanBluetooth.swift */,
 				B06A14EBD8BEFEE55FBD3494 /* WiFiSetupView.swift */,
@@ -162,6 +165,7 @@
 				A9B7E9F7BB379D64A013BBD0 /* NetworkProfile.swift in Sources */,
 				AA09132B5F449DC5EDF17984 /* NetworkProfileStore.swift in Sources */,
 				DEF2A5A7356DF74135BE3E21 /* SaoirseApp.swift in Sources */,
+				2FE1AEBE7480BB2B504EE150 /* SaoirseTheme.swift in Sources */,
 				D579AFA99AE34B9BAF448B0E /* SettingsView.swift in Sources */,
 				EB8C3E3E9B8503A0C70E0E94 /* StackChanBluetooth.swift in Sources */,
 				D7C30FC30B67203E753DBA8C /* WiFiProtocol.swift in Sources */,
