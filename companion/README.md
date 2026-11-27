@@ -42,6 +42,8 @@ patch --dry-run -p1 < /path/to/saoirse-speaker-follow.patch
 patch -p1 < /path/to/saoirse-speaker-follow.patch
 patch --dry-run -p1 < /path/to/saoirse-plush-face.patch
 patch -p1 < /path/to/saoirse-plush-face.patch
+patch --dry-run -p1 < /path/to/saoirse-env-iii.patch
+patch -p1 < /path/to/saoirse-env-iii.patch
 cp /path/to/plush-face/saoirse_plush.bin main/assets/
 cp /path/to/plush-face/saoirse_giggle.ogg main/assets/sfx/
 idf.py reconfigure build
@@ -54,6 +56,8 @@ The [plush face patch](firmware/saoirse-plush-face.patch) brings the 3D-rendered
 Firmware 1.6.26 adds a reaction to a stroke or a hand resting on the head. In AI Agent standby, her cheeks flush while she giggles and a glossy heart floats up and fades. Rapid repeat strokes share a short cooldown. During a conversation the cheeks and heart give quiet feedback. A new voice connection clears the idle giggle before it starts listening.
 
 Firmware 1.6.27 uses the standby gaze animation to look left, right and up. In Listening, the eyes open wider and hold a forward gaze as speaker tracking aims the head. In Speaking, a smile in the eyes follows the playback emphasis. Blinks are shorter and less frequent. The sleepy expression keeps the eyes partly open, and the giggle uses one brief eye squeeze.
+
+Firmware 1.6.28 supports the [M5Stack Unit ENV III](https://docs.m5stack.com/en/unit/Unit_ENV-III) on the red **Port A** connector. Ask “Read the ENV III sensor” for current room temperature, relative humidity and local air pressure. Saoirse checks the connection on startup and measures again on each request. General room temperature and humidity requests can fall back to a configured Xiaomi Bluetooth thermometer when the wired unit is unavailable. An explicit ENV III request uses only the wired unit.
 
 To regenerate the sprites from the approved [source poses](firmware/plush-face/source.png), run `python3 companion/firmware/plush-face/render.py /path/to/output` with Pillow installed. Copy `saoirse_plush.bin` to `firmware/main/assets/` and `plush_frames.h` to `firmware/main/stackchan/avatar/skins/saoirse/`. To regenerate the embedded giggle, run `python3 companion/firmware/plush-face/render_giggle.py /path/to/saoirse_giggle.ogg` with FFmpeg and libopus installed.
 
