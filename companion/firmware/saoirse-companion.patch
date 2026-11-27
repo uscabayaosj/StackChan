@@ -1,0 +1,425 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,7 +2,7 @@
+ # CMakeLists in this exact order for cmake to work correctly
+ cmake_minimum_required(VERSION 3.16)
+ 
+-set(PROJECT_VER "1.6.5")
++set(PROJECT_VER "1.6.6")
+ add_definitions(-DFIRMWARE_VERSION=\"${PROJECT_VER}\")
+ 
+ # Add this line to disable the specific warning
+--- a/main/hal/hal.cpp
++++ b/main/hal/hal.cpp
+@@ -9,6 +9,8 @@
+ #include <mooncake_log.h>
+ #include <nvs_flash.h>
+ 
++void startCompanionRelay();
++
+ static std::unique_ptr<Hal> _hal_instance;
+ static const std::string_view _tag = "HAL";
+ 
+@@ -42,6 +44,7 @@
+     imu_init();
+     servo_init();
+     lvgl_init();
++    startCompanionRelay();
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+--- /dev/null
++++ b/main/hal/companion_relay.cpp
+@@ -0,0 +1,208 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#include "application.h"
++#include "audio_codec.h"
++#include "backlight.h"
++#include "board.h"
++#include "board/hal_bridge.h"
++#include "board/stackchan_camera.h"
++#include "board/stackchan_display.h"
++#include "display.h"
++#include "settings.h"
++#include "system_info.h"
++#include <stackchan/stackchan.h>
++#include <cJSON.h>
++#include <esp_crt_bundle.h>
++#include <esp_heap_caps.h>
++#include <esp_http_client.h>
++#include <esp_netif.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <cstring>
++#include <strings.h>
++#include <memory>
++#include <string>
++
++namespace {
++
++using Jpeg = std::unique_ptr<uint8_t, decltype(&heap_caps_free)>;
++
++bool wifiReady()
++{
++    auto* station = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
++    esp_netif_ip_info_t address{};
++    return station && esp_netif_is_netif_up(station) &&
++           esp_netif_get_ip_info(station, &address) == ESP_OK && address.ip.addr != 0;
++}
++
++struct Reply {
++    std::string body;
++    int retrySeconds = 0;
++};
++
++esp_err_t collectReply(esp_http_client_event_t* event)
++{
++    auto& reply = *static_cast<Reply*>(event->user_data);
++    if (event->event_id == HTTP_EVENT_ON_HEADER && event->header_key && event->header_value &&
++        strcasecmp(event->header_key, "Retry-After") == 0) {
++        const char* value = event->header_value;
++        if (value[0] >= '1' && value[0] <= '9' && value[1] == '\0') {
++            reply.retrySeconds = value[0] - '0';
++        }
++    }
++    if (event->event_id != HTTP_EVENT_ON_DATA) return ESP_OK;
++    if (event->data_len < 0 || reply.body.size() + event->data_len > 1024) return ESP_FAIL;
++    reply.body.append(static_cast<const char*>(event->data), event->data_len);
++    return ESP_OK;
++}
++
++bool inRange(const cJSON* value, int low, int high)
++{
++    return cJSON_IsNumber(value) && value->valuedouble == value->valueint &&
++           value->valueint >= low && value->valueint <= high;
++}
++
++bool validCommandId(const char* id)
++{
++    if (!id || strlen(id) != 36) return false;
++    return std::string(id).find_first_not_of("0123456789abcdef-") == std::string::npos;
++}
++
++bool execute(const cJSON* body, Jpeg& jpeg, size_t& length, int64_t& liveUntil)
++{
++    const char* actionText = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(body, "action"));
++    if (!actionText) return false;
++    const std::string action(actionText);
++    if (action == "head") {
++        const auto* yaw = cJSON_GetObjectItemCaseSensitive(body, "yaw");
++        const auto* pitch = cJSON_GetObjectItemCaseSensitive(body, "pitch");
++        if (!inRange(yaw, -45, 45) || !inRange(pitch, 0, 45)) return false;
++        LvglLockGuard lock;
++        auto& motion = GetStackChan().motion();
++        if (motion.isModifyLocked()) return false;
++        motion.yawServo().moveWithSpeed(yaw->valueint * 10, 150);
++        motion.pitchServo().moveWithSpeed(pitch->valueint * 10, 150);
++        return true;
++    }
++
++    auto& board = Board::GetInstance();
++    if (action == "volume" || action == "brightness") {
++        const auto* value = cJSON_GetObjectItemCaseSensitive(body, "value");
++        if (!inRange(value, 0, 100)) return false;
++        if (action == "volume") {
++            if (auto* codec = board.GetAudioCodec()) {
++                codec->SetOutputVolume(value->valueint);
++                return true;
++            }
++        } else if (auto* backlight = board.GetBacklight()) {
++            backlight->SetBrightness(value->valueint, true);
++            return true;
++        }
++        return false;
++    }
++
++    if (action != "photo" && action != "streamStart" && action != "frame") return false;
++    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
++        liveUntil = 0;
++        return false;
++    }
++    if (action == "frame" && esp_timer_get_time() > liveUntil) return false;
++    auto* camera = hal_bridge::board_get_camera();
++    if (!camera) return false;
++
++    const bool live = action != "photo";
++    auto* display = dynamic_cast<StackChanAvatarDisplay*>(board.GetDisplay());
++    if (!display || !display->ShowCompanionCameraIndicator(live)) return false;
++    uint8_t* raw = nullptr;
++    const int64_t captureStarted = esp_timer_get_time();
++    const bool ok = camera->TakeCompanionJpeg(action == "photo", live ? 35 : 80, &raw, &length);
++    jpeg.reset(raw);
++    if (live) liveUntil = ok ? captureStarted + 3500000 : 0;
++    return ok && jpeg && length && length <= 768 * 1024;
++}
++
++void run(void*)
++{
++    const auto deviceId = SystemInfo::GetMacAddress();
++    for (;;) {
++        if (!wifiReady()) {
++            vTaskDelay(pdMS_TO_TICKS(1500));
++            continue;
++        }
++        const auto root = Settings("companion", false).GetString("url");
++        const auto token = Settings("websocket", false).GetString("token");
++        if (root.rfind("https://", 0) != 0 || root.find_first_of("?#") != std::string::npos || token.empty()) {
++            vTaskDelay(pdMS_TO_TICKS(5000));
++            continue;
++        }
++        const std::string poll = root + "/poll";
++        const std::string result = root + "/result";
++        const std::string auth = "Bearer " + token;
++        Reply reply;
++        esp_http_client_config_t config{};
++        config.url = poll.c_str();
++        config.timeout_ms = 9500;
++        config.disable_auto_redirect = true;
++        config.crt_bundle_attach = esp_crt_bundle_attach;
++        config.event_handler = collectReply;
++        config.user_data = &reply;
++        auto client = esp_http_client_init(&config);
++        if (!client) {
++            vTaskDelay(pdMS_TO_TICKS(3000));
++            continue;
++        }
++        esp_http_client_set_header(client, "Authorization", auth.c_str());
++        esp_http_client_set_header(client, "Device-Id", deviceId.c_str());
++
++        int64_t liveUntil = 0;
++        while (wifiReady()) {
++            reply = {};
++            esp_http_client_set_url(client, poll.c_str());
++            esp_http_client_set_post_field(client, nullptr, 0);
++            esp_http_client_set_method(client, HTTP_METHOD_GET);
++            esp_http_client_delete_header(client, "X-Command-Id");
++            esp_http_client_delete_header(client, "X-Command-Result");
++            esp_http_client_delete_header(client, "Content-Type");
++            if (esp_http_client_perform(client) != ESP_OK) break;
++            const int status = esp_http_client_get_status_code(client);
++            if (status == 204) {
++                const auto now = esp_timer_get_time();
++                if (reply.retrySeconds) {
++                    vTaskDelay(pdMS_TO_TICKS(now < liveUntil ? 180 : reply.retrySeconds * 1000));
++                }
++                continue;
++            }
++            if (status != 200) break;
++            const auto command = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>(
++                cJSON_Parse(reply.body.c_str()), cJSON_Delete);
++            const char* id = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(command.get(), "id"));
++            if (!validCommandId(id)) break;
++
++            Jpeg jpeg(nullptr, heap_caps_free);
++            size_t length = 0;
++            const bool ok = execute(command.get(), jpeg, length, liveUntil);
++            if (!ok) length = 0;
++            reply = {};
++            esp_http_client_set_url(client, result.c_str());
++            esp_http_client_set_method(client, HTTP_METHOD_POST);
++            esp_http_client_set_header(client, "X-Command-Id", id);
++            esp_http_client_set_header(client, "X-Command-Result", ok ? "ok" : "error");
++            esp_http_client_set_header(client, "Content-Type", length ? "image/jpeg" : "application/octet-stream");
++            esp_http_client_set_post_field(client, length ? reinterpret_cast<const char*>(jpeg.get()) : "", length);
++            const auto sent = esp_http_client_perform(client);
++            esp_http_client_set_post_field(client, nullptr, 0);
++            if (sent != ESP_OK) break;
++        }
++        esp_http_client_cleanup(client);
++        vTaskDelay(pdMS_TO_TICKS(2500));
++    }
++}
++
++}  // namespace
++
++void startCompanionRelay()
++{
++    xTaskCreate(run, "companion", 10 * 1024, nullptr, 2, nullptr);
++}
+--- a/main/hal/board/stackchan_camera.h
++++ b/main/hal/board/stackchan_camera.h
+@@ -4,6 +4,7 @@
+ #ifndef CONFIG_IDF_TARGET_ESP32
+ #include <lvgl.h>
+ #include <memory>
++#include <mutex>
+ #include <vector>
+ 
+ #include <freertos/FreeRTOS.h>
+@@ -21,6 +22,8 @@
+         uint16_t height       = 0;
+         v4l2_pix_fmt_t format = 0;
+     } frame_;
++    std::mutex capture_mutex_;
++    bool CaptureFrame(bool preview);
+     v4l2_pix_fmt_t sensor_format_ = 0;
+ #ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
+     uint16_t sensor_width_  = 0;
+@@ -44,6 +47,8 @@
+     virtual void SetExplainUrl(const std::string& url, const std::string& token);
+     virtual bool Capture() override;
+     bool StreamCaptures();
++    std::unique_lock<std::mutex> LockCapture() { return std::unique_lock(capture_mutex_); }
++    bool TakeCompanionJpeg(bool preview, int quality, uint8_t** out, size_t* length);
+ 
+     // 翻转控制函数
+     virtual bool SetHMirror(bool enabled) override;
+--- a/main/hal/board/stackchan_camera.cc
++++ b/main/hal/board/stackchan_camera.cc
+@@ -425,15 +425,36 @@
+ 
+ bool StackChanCamera::Capture()
+ {
++    auto lock = LockCapture();
++    return CaptureFrame(true);
++}
++
++bool StackChanCamera::TakeCompanionJpeg(bool preview, int quality, uint8_t** out, size_t* length)
++{
++    auto lock = LockCapture();
++    // Preserve a pending voice photo while the companion takes its own frame.
++    const auto original = frame_;
++    frame_.data = nullptr;
++    const bool captured = CaptureFrame(preview);
++    const bool encoded = captured && frame_.data &&
++        image_to_jpeg(frame_.data, frame_.len, frame_.width, frame_.height,
++                      frame_.format, quality, out, length);
++    heap_caps_free(frame_.data);
++    frame_ = original;
++    return encoded;
++}
++
++bool StackChanCamera::CaptureFrame(bool preview)
++{
+     if (video_fd_ < 0 || (!streaming_on_ && !ResetCaptureStream())) {
+         return false;
+     }
+ 
+-    auto* display = dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay());
++    auto* display = preview ? dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay()) : nullptr;
+     if (auto* stackChanDisplay = dynamic_cast<StackChanAvatarDisplay*>(display)) {
+         stackChanDisplay->PlayPhotoShutter();
+     }
+-    hal_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
++    if (preview) hal_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
+ 
+     for (int i = 0; i < 3; i++) {
+         struct v4l2_buffer buf = {};
+@@ -1038,15 +1059,17 @@
+ 
+ std::string StackChanCamera::Explain(const std::string& question)
+ {
+-    if (explain_url_.empty() || frame_.data == nullptr) {
++    if (explain_url_.empty()) {
+         throw std::runtime_error("Camera upload URL or frame unavailable");
+     }
+ 
+     const auto encode_started = esp_timer_get_time();
++    auto lock = LockCapture();
+     uint8_t* encoded = nullptr;
+     size_t jpeg_size = 0;
+-    const bool encoded_ok = image_to_jpeg(frame_.data, frame_.len, frame_.width, frame_.height,
++    const bool encoded_ok = frame_.data && image_to_jpeg(frame_.data, frame_.len, frame_.width, frame_.height,
+                                           frame_.format, 80, &encoded, &jpeg_size);
++    lock.unlock();
+     std::unique_ptr<uint8_t, decltype(&heap_caps_free)> jpeg(encoded, heap_caps_free);
+     if (!encoded_ok || !jpeg || jpeg_size == 0) {
+         throw std::runtime_error("Failed to encode photo");
+--- a/main/hal/board/stackchan_display.h
++++ b/main/hal/board/stackchan_display.h
+@@ -47,6 +47,8 @@
+     bool preview_waiting_                           = false;
+     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
+     InfoCardOverlay info_cards_;
++    lv_obj_t* companion_camera_indicator_ = nullptr;
++    lv_timer_t* companion_camera_timer_ = nullptr;
+ 
+     void CreateIdleMotionModifier();
+     void HidePhotoPreview();
+@@ -75,6 +77,7 @@
+     virtual void SetStatus(const char* status) override;
+     virtual void ShowNotification(const char* notification, int duration_ms = 3000) override;
+     void PlayPhotoShutter();
++    bool ShowCompanionCameraIndicator(bool live);
+     void ShowInfoCard(const InfoCard& card) override;
+     void StartTimerCard(int id, uint32_t duration_ms, const std::string& name);
+     void StopTimerCard(int id);
+--- a/main/hal/board/stackchan_display.cc
++++ b/main/hal/board/stackchan_display.cc
+@@ -200,6 +200,9 @@
+         lv_obj_del(preview_image_);
+     }
+ 
++    if (companion_camera_timer_) lv_timer_delete(companion_camera_timer_);
++    if (companion_camera_indicator_) lv_obj_delete(companion_camera_indicator_);
++
+     auto& stackchan = GetStackChan();
+     if (stackchan.hasAvatar()) {
+         stackchan.resetAvatar();
+@@ -434,6 +437,38 @@
+     stackchan.avatar().clearSpeech();
+ 
+     ESP_LOGI(TAG, "Chat messages cleared");
++}
++
++bool StackChanAvatarDisplay::ShowCompanionCameraIndicator(bool live)
++{
++    DisplayLockGuard lock(this);
++    if (!setup_ui_called_) return false;
++    if (!companion_camera_indicator_) {
++        companion_camera_indicator_ = lv_label_create(lv_layer_top());
++        if (!companion_camera_indicator_) return false;
++        lv_obj_align(companion_camera_indicator_, LV_ALIGN_TOP_RIGHT, -6, 6);
++        lv_obj_set_style_bg_color(companion_camera_indicator_, lv_color_hex(0x9C172D), 0);
++        lv_obj_set_style_bg_opa(companion_camera_indicator_, LV_OPA_COVER, 0);
++        lv_obj_set_style_text_color(companion_camera_indicator_, lv_color_hex(0xFFFFFF), 0);
++        lv_obj_set_style_pad_all(companion_camera_indicator_, 4, 0);
++        lv_obj_set_style_radius(companion_camera_indicator_, 5, 0);
++    }
++    if (!companion_camera_timer_) {
++        companion_camera_timer_ = lv_timer_create([](lv_timer_t* timer) {
++            auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++            lv_obj_add_flag(display->companion_camera_indicator_, LV_OBJ_FLAG_HIDDEN);
++            lv_timer_pause(timer);
++        }, 3500, this);
++        if (!companion_camera_timer_) {
++            lv_obj_add_flag(companion_camera_indicator_, LV_OBJ_FLAG_HIDDEN);
++            return false;
++        }
++    }
++    lv_label_set_text(companion_camera_indicator_, live ? "Remote camera live" : "Remote photo");
++    lv_obj_remove_flag(companion_camera_indicator_, LV_OBJ_FLAG_HIDDEN);
++    lv_timer_reset(companion_camera_timer_);
++    lv_timer_resume(companion_camera_timer_);
++    return true;
+ }
+ 
+ void StackChanAvatarDisplay::PlayPhotoShutter()
+--- a/main/hal/hal_ws_avatar.cpp
++++ b/main/hal/hal_ws_avatar.cpp
+@@ -429,6 +429,7 @@
+         }
+ 
+         _time_count = esp_timer_get_time();
++        auto captureLock = camera->LockCapture();
+         if (camera->StreamCaptures()) {
+             _interval = esp_timer_get_time() - _time_count;
+             mclog::info("camera capture time: {} ms", _interval / 1000);
+--- a/xiaozhi-esp32/main/ota.cc
++++ b/xiaozhi-esp32/main/ota.cc
+@@ -158,6 +158,12 @@
+         ESP_LOGI(TAG, "No mqtt section found !");
+     }
+ 
++    {
++        Settings companion("companion", true);
++        const char* url = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "companion_url"));
++        const std::string configured = url ? url : "";
++        if (companion.GetString("url") != configured) companion.SetString("url", configured);
++    }
+     has_websocket_config_ = false;
+     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");
+     if (cJSON_IsObject(websocket)) {

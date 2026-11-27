@@ -1,0 +1,360 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		130873D470B9C156C64A8A1F /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA47BF08767E69A4A72A47B /* CameraView.swift */; };
+		1E023C1423FE3E6A43539347 /* CompanionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E081B21364C40F75A81632 /* CompanionClient.swift */; };
+		21FB53504E9864F175DCFAD3 /* WiFiSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06A14EBD8BEFEE55FBD3494 /* WiFiSetupView.swift */; };
+		3A7B401C87B020A22E58559B /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03BAAB076747C9D1F5941F5 /* HistoryView.swift */; };
+		40C9E181A9340E33C0877B4C /* DirectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0861FE70A13A8CD5781FBA0D /* DirectionsView.swift */; };
+		5405F9A3D25258F1686C616E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DCC2C94EA50A2E76550DD88B /* Assets.xcassets */; };
+		A9B7E9F7BB379D64A013BBD0 /* NetworkProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832DA2460CFFF1B6164A612F /* NetworkProfile.swift */; };
+		AA09132B5F449DC5EDF17984 /* NetworkProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31F5ECD32F93ABB36BCC2CAB /* NetworkProfileStore.swift */; };
+		D579AFA99AE34B9BAF448B0E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEE9FB88704A60D5CE3ACB4 /* SettingsView.swift */; };
+		D7C30FC30B67203E753DBA8C /* WiFiProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4BB2C377171DD142FB8E730 /* WiFiProtocol.swift */; };
+		DEF2A5A7356DF74135BE3E21 /* SaoirseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18888CFC22DF5D2498C14E27 /* SaoirseApp.swift */; };
+		DF74B52E34BCF5D393348DBC /* Directions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D449626BD749B6467D80E2 /* Directions.swift */; };
+		EB8C3E3E9B8503A0C70E0E94 /* StackChanBluetooth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D08CD9CEF975E82497FEA7A /* StackChanBluetooth.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0861FE70A13A8CD5781FBA0D /* DirectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsView.swift; sourceTree = "<group>"; };
+		15A1F7B116434E494766A916 /* Saoirse.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Saoirse.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		16D449626BD749B6467D80E2 /* Directions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Directions.swift; sourceTree = "<group>"; };
+		18888CFC22DF5D2498C14E27 /* SaoirseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaoirseApp.swift; sourceTree = "<group>"; };
+		31F5ECD32F93ABB36BCC2CAB /* NetworkProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkProfileStore.swift; sourceTree = "<group>"; };
+		3EEE9FB88704A60D5CE3ACB4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		832DA2460CFFF1B6164A612F /* NetworkProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkProfile.swift; sourceTree = "<group>"; };
+		9D08CD9CEF975E82497FEA7A /* StackChanBluetooth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackChanBluetooth.swift; sourceTree = "<group>"; };
+		B06A14EBD8BEFEE55FBD3494 /* WiFiSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiSetupView.swift; sourceTree = "<group>"; };
+		C6E081B21364C40F75A81632 /* CompanionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionClient.swift; sourceTree = "<group>"; };
+		D03BAAB076747C9D1F5941F5 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		D4BB2C377171DD142FB8E730 /* WiFiProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiProtocol.swift; sourceTree = "<group>"; };
+		DCC2C94EA50A2E76550DD88B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FAA47BF08767E69A4A72A47B /* CameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1331CBD34A08882E8708690B /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				DCC2C94EA50A2E76550DD88B /* Assets.xcassets */,
+				FAA47BF08767E69A4A72A47B /* CameraView.swift */,
+				C6E081B21364C40F75A81632 /* CompanionClient.swift */,
+				0861FE70A13A8CD5781FBA0D /* DirectionsView.swift */,
+				D03BAAB076747C9D1F5941F5 /* HistoryView.swift */,
+				31F5ECD32F93ABB36BCC2CAB /* NetworkProfileStore.swift */,
+				18888CFC22DF5D2498C14E27 /* SaoirseApp.swift */,
+				3EEE9FB88704A60D5CE3ACB4 /* SettingsView.swift */,
+				9D08CD9CEF975E82497FEA7A /* StackChanBluetooth.swift */,
+				B06A14EBD8BEFEE55FBD3494 /* WiFiSetupView.swift */,
+				7F10F57D48FB454FD95C0440 /* Protocol */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		7F10F57D48FB454FD95C0440 /* Protocol */ = {
+			isa = PBXGroup;
+			children = (
+				16D449626BD749B6467D80E2 /* Directions.swift */,
+				832DA2460CFFF1B6164A612F /* NetworkProfile.swift */,
+				D4BB2C377171DD142FB8E730 /* WiFiProtocol.swift */,
+			);
+			path = Protocol;
+			sourceTree = "<group>";
+		};
+		B670B647984DDB0CD5782562 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				15A1F7B116434E494766A916 /* Saoirse.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E70364B7C96B6E2DBECF04B5 = {
+			isa = PBXGroup;
+			children = (
+				1331CBD34A08882E8708690B /* Sources */,
+				B670B647984DDB0CD5782562 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		12AE58454FF3BAB741AC0CEB /* Saoirse */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 964562D959B78B1E749B5DA1 /* Build configuration list for PBXNativeTarget "Saoirse" */;
+			buildPhases = (
+				B41AFA5FA1615A05820929D8 /* Sources */,
+				600EEECB61BF1D974B9C8437 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Saoirse;
+			packageProductDependencies = (
+			);
+			productName = Saoirse;
+			productReference = 15A1F7B116434E494766A916 /* Saoirse.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7EE66275E26A2B90993BF1D2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					12AE58454FF3BAB741AC0CEB = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = B992366D50ED4639515A0BC2 /* Build configuration list for PBXProject "Saoirse" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E70364B7C96B6E2DBECF04B5;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B670B647984DDB0CD5782562 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				12AE58454FF3BAB741AC0CEB /* Saoirse */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		600EEECB61BF1D974B9C8437 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5405F9A3D25258F1686C616E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B41AFA5FA1615A05820929D8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				130873D470B9C156C64A8A1F /* CameraView.swift in Sources */,
+				1E023C1423FE3E6A43539347 /* CompanionClient.swift in Sources */,
+				DF74B52E34BCF5D393348DBC /* Directions.swift in Sources */,
+				40C9E181A9340E33C0877B4C /* DirectionsView.swift in Sources */,
+				3A7B401C87B020A22E58559B /* HistoryView.swift in Sources */,
+				A9B7E9F7BB379D64A013BBD0 /* NetworkProfile.swift in Sources */,
+				AA09132B5F449DC5EDF17984 /* NetworkProfileStore.swift in Sources */,
+				DEF2A5A7356DF74135BE3E21 /* SaoirseApp.swift in Sources */,
+				D579AFA99AE34B9BAF448B0E /* SettingsView.swift in Sources */,
+				EB8C3E3E9B8503A0C70E0E94 /* StackChanBluetooth.swift in Sources */,
+				D7C30FC30B67203E753DBA8C /* WiFiProtocol.swift in Sources */,
+				21FB53504E9864F175DCFAD3 /* WiFiSetupView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2847E94ACA67D11A49667732 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Saoirse;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your nearby Saoirse to configure Wi-Fi.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.uscabayao.SaoirseCompanion;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		2FAAA1DDE3CDB20135EB3EFE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Saoirse;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your nearby Saoirse to configure Wi-Fi.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.uscabayao.SaoirseCompanion;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		E63D32B1A9D3FFF5632B0ACC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		EEBCC73B872A3D76353B9336 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		964562D959B78B1E749B5DA1 /* Build configuration list for PBXNativeTarget "Saoirse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2847E94ACA67D11A49667732 /* Debug */,
+				2FAAA1DDE3CDB20135EB3EFE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B992366D50ED4639515A0BC2 /* Build configuration list for PBXProject "Saoirse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E63D32B1A9D3FFF5632B0ACC /* Debug */,
+				EEBCC73B872A3D76353B9336 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7EE66275E26A2B90993BF1D2 /* Project object */;
+}

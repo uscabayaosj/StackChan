@@ -1,0 +1,7 @@
+/test
+/scripts
+*.wav
+.env*
+.superpowers
+vitest.config.ts
+/out

@@ -1,0 +1,203 @@
+import { assertTimeZone } from './clock.js';
+import type { ICloudConfig } from './icloud_dav.js';
+
+export interface LlmConfig {
+  protocol?: 'anthropic';
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  providerOrder?: string[];
+  maxTokens: number;
+  /** 'none' means do not send the reasoning field at all. */
+  reasoningEffort?: ReasoningEffort;
+}
+
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'none';
+
+export interface Config {
+  darwinAuthorization?: string;
+  railDataApiKey?: string;
+  logConversation?: boolean;
+  speechGain?: number;
+  llm: LlmConfig;
+  fallbackLlm?: LlmConfig;
+  elevenlabs: { apiKey: string; voiceId: string; ttsModel: string; sttModel: string };
+  deviceToken: string;
+  /** Shared secret the robot appends to CONFIG_OTA_URL as `?k=`; empty disables the check (and warns). */
+  otaSecret: string;
+  publicWsUrl: string;
+  vad: { rmsThreshold: number; silenceMs: number; minSpeechMs: number; preRollMs: number };
+  idleCloseMs: number;
+  hardCloseMs: number;
+  echoGuardMs: number;
+  /** Ignore microphone audio this long after a `listen start` that follows a wake word: the robot plays its popup chime then. */
+  wakeGuardMs: number;
+  contextTurns: number;
+  /** Per-call deadlines: STT request, the whole LLM stream, and each TTS sentence. */
+  sttTimeoutMs: number;
+  llmTimeoutMs: number;
+  ttsTimeoutMs: number;
+  /** IANA time zone of the robot (e.g. Asia/Manila): OTA clock offset and the prompt's local time. */
+  deviceTz: string;
+  iCloudCalendar?: ICloudConfig;
+  /** Robot MCP tools offered to the LLM (names as the robot advertises them). */
+  deviceTools: string[];
+  /** Server-side tools offered to the LLM: get_weather, web_search, calculate, convert_units. */
+  serverTools: string[];
+  /** Home for the weather tool. */
+  weather: { place: string; latitude: number; longitude: number; hasCoordinates: boolean };
+  /** Web search: an OpenAI-compatible model that searches as it answers (Perplexity Sonar on OpenRouter). */
+  search: { baseUrl: string; apiKey: string; model: string; timeoutMs: number };
+  /** Where the robot uploads photos (`/api/vision`); derived from PUBLIC_WS_URL unless PUBLIC_VISION_URL is set. */
+  publicVisionUrl: string;
+  vision: { baseUrl: string; apiKey: string; model: string; timeoutMs: number; maxBytes: number };
+  /** Deadlines for a robot tool call: the camera (capture + upload + vision model) and everything else. */
+  toolTimeoutMs: { camera: number; other: number };
+}
+
+export const DEFAULT_DEVICE_TOOLS = [
+  'self.camera.take_photo', 'self.robot.face_speaker', 'self.robot.set_head_angles', 'self.robot.get_head_angles', 'self.robot.set_led_color',
+  'self.robot.create_reminder', 'self.robot.get_reminders', 'self.robot.stop_reminder', 'self.robot.start_timer',
+  'self.get_device_status', 'self.audio_speaker.set_volume', 'self.screen.set_brightness', 'self.screen.set_theme',
+  'self.robot.get_indoor_climate',
+];
+
+/** `wss://host/api/ws` -> `https://host/api/vision` (ws -> http for local runs). */
+export function deriveVisionUrl(publicWsUrl: string): string {
+  const u = new URL(publicWsUrl);
+  u.protocol = u.protocol === 'ws:' ? 'http:' : 'https:';
+  u.pathname = u.pathname.replace(/\/api\/ws\/?$/, '/api/vision');
+  if (!u.pathname.endsWith('/api/vision')) u.pathname = '/api/vision';
+  u.search = '';
+  return u.toString();
+}
+
+function req(env: NodeJS.ProcessEnv, key: string): string {
+  const v = env[key];
+  if (!v) throw new Error(`Missing required environment variable ${key}`);
+  return v;
+}
+
+function num(env: NodeJS.ProcessEnv, key: string, dflt: number): number {
+  const v = env[key];
+  if (v === undefined || v === '') return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`Invalid ${key}: ${v} (expected a number)`);
+  return n;
+}
+
+function effort(env: NodeJS.ProcessEnv, key: string, dflt: ReasoningEffort): ReasoningEffort {
+  const v = (env[key] ?? '').trim().toLowerCase();
+  if (v === '') return dflt;
+  if (v === 'low' || v === 'medium' || v === 'high' || v === 'none') return v;
+  throw new Error(`Invalid ${key}: ${v} (expected low, medium, high or none)`);
+}
+
+function timeZone(env: NodeJS.ProcessEnv, key: string, dflt: string): string {
+  const v = (env[key] ?? '').trim() || dflt;
+  try { assertTimeZone(v); } catch { throw new Error(`Invalid ${key}: ${v} (expected an IANA time zone such as Asia/Manila)`); }
+  return v;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const anthropicKey = env.SAOIRSE_ANTHROPIC_API_KEY;
+  const fallbackKey = env.LLM_FALLBACK_API_KEY;
+  const deviceToken = env.SAOIRSE_DEVICE_TOKEN || '';
+  const otaSecret = env.OTA_SECRET || '';
+  // The OTA reply carries the device token: a public deployment must gate it. Flash the robot with the ?k= URL first.
+  if (env.VERCEL && !otaSecret) throw new Error('OTA_SECRET must be set on Vercel (/api/ota hands out the WebSocket token); flash the robot with CONFIG_OTA_URL ...?k=<secret> first');
+  // Locally an empty token means "auth off"; a public deployment must never run open.
+  if (env.VERCEL && !deviceToken) throw new Error('SAOIRSE_DEVICE_TOKEN must be set on Vercel (an empty token would leave /api/ws open)');
+  const calendarName = env.ICLOUD_CALENDAR_NAME?.trim();
+  if (calendarName && (!deviceToken || !otaSecret)) {
+    throw new Error('iCloud Calendar requires SAOIRSE_DEVICE_TOKEN and OTA_SECRET');
+  }
+  return {
+    darwinAuthorization: env.DARWIN_AUTHORIZATION,
+    railDataApiKey: env.RAIL_DATA_API_KEY?.trim() || undefined,
+    logConversation: env.LOG_CONVERSATION === 'true',
+    speechGain: Math.min(2, Math.max(1, num(env, 'SPEECH_GAIN', 1.25))),
+    llm: anthropicKey ? {
+      protocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: anthropicKey,
+      model: 'claude-haiku-5-5',
+      maxTokens: num(env, 'LLM_MAX_TOKENS', 400),
+    } : {
+      baseUrl: env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      apiKey: req(env, 'LLM_API_KEY'),
+      model: env.LLM_MODEL || 'openai/gpt-oss-20b',
+      providerOrder: (env.LLM_PROVIDER_ORDER ?? 'groq').split(',').map(s => s.trim()).filter(Boolean),
+      maxTokens: num(env, 'LLM_MAX_TOKENS', 400),
+      reasoningEffort: effort(env, 'LLM_REASONING_EFFORT', 'low'),
+    },
+    fallbackLlm: fallbackKey
+      ? {
+          baseUrl: env.LLM_FALLBACK_BASE_URL || 'https://api.deepseek.com/v1',
+          apiKey: fallbackKey,
+          model: env.LLM_FALLBACK_MODEL || 'deepseek-flash',
+          maxTokens: num(env, 'LLM_FALLBACK_MAX_TOKENS', 400),
+          reasoningEffort: effort(env, 'LLM_FALLBACK_REASONING_EFFORT', 'none'),
+        }
+      : undefined,
+    elevenlabs: {
+      apiKey: req(env, 'ELEVENLABS_API_KEY'),
+      voiceId: req(env, 'ELEVENLABS_VOICE_ID'),
+      ttsModel: env.ELEVENLABS_TTS_MODEL || 'eleven_flash_v2_5',
+      sttModel: env.ELEVENLABS_STT_MODEL || 'scribe_v2',
+    },
+    deviceToken,
+    otaSecret: otaSecret,
+    publicWsUrl: req(env, 'PUBLIC_WS_URL'),
+    vad: {
+      rmsThreshold: num(env, 'VAD_RMS_THRESHOLD', 0.015),
+      silenceMs: num(env, 'VAD_SILENCE_MS', 1_200),
+      minSpeechMs: num(env, 'VAD_MIN_SPEECH_MS', 180),
+      preRollMs: num(env, 'VAD_PREROLL_MS', 300),
+    },
+    idleCloseMs: num(env, 'IDLE_CLOSE_MS', 60_000),
+    hardCloseMs: num(env, 'HARD_CLOSE_MS', 280_000),
+    echoGuardMs: num(env, 'ECHO_GUARD_MS', 250),
+    wakeGuardMs: num(env, 'WAKE_GUARD_MS', 800),
+    contextTurns: num(env, 'CONTEXT_TURNS', 10),
+    sttTimeoutMs: num(env, 'STT_TIMEOUT_MS', 10_000),
+    llmTimeoutMs: num(env, 'LLM_TIMEOUT_MS', 15_000),
+    ttsTimeoutMs: num(env, 'TTS_TIMEOUT_MS', 10_000),
+    deviceTz: timeZone(env, 'DEVICE_TZ', 'UTC'),
+    iCloudCalendar: calendarName ? {
+      name: calendarName,
+      account: req(env, 'ICLOUD_CALENDAR_ACCOUNT').trim(),
+      password: req(env, 'ICLOUD_CALENDAR_APP_PASSWORD').trim(),
+    } : undefined,
+    deviceTools: (env.DEVICE_TOOLS ?? DEFAULT_DEVICE_TOOLS.join(',')).split(',').map(s => s.trim()).filter(Boolean),
+    serverTools: (env.SERVER_TOOLS ?? 'get_weather,web_search,calculate,convert_units,seconds_until,get_london_departures,show_word_definition,get_directions').split(',').map(s => s.trim()).filter(Boolean),
+    // Home for the weather tool. A WEATHER_PLACE without both coordinates is geocoded on use, never
+    // paired with London's coordinates.
+    weather: (() => {
+      const place = env.WEATHER_PLACE || 'London';
+      const hasLat = !!env.WEATHER_LATITUDE, hasLon = !!env.WEATHER_LONGITUDE;
+      const londonDefault = !env.WEATHER_PLACE && !hasLat && !hasLon;
+      return {
+        place,
+        latitude: num(env, 'WEATHER_LATITUDE', 51.5072),
+        longitude: num(env, 'WEATHER_LONGITUDE', -0.1276),
+        hasCoordinates: londonDefault || (hasLat && hasLon),
+      };
+    })(),
+    search: {
+      baseUrl: env.SEARCH_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      apiKey: env.SEARCH_API_KEY || req(env, 'LLM_API_KEY'),
+      model: env.SEARCH_MODEL || 'perplexity/sonar',
+      timeoutMs: num(env, 'SEARCH_TIMEOUT_MS', 15_000),
+    },
+    publicVisionUrl: env.PUBLIC_VISION_URL || deriveVisionUrl(req(env, 'PUBLIC_WS_URL')),
+    vision: {
+      baseUrl: env.VISION_BASE_URL || env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+      apiKey: env.VISION_API_KEY || req(env, 'LLM_API_KEY'),
+      model: env.VISION_MODEL || 'google/gemini-3.5-flash-lite',
+      timeoutMs: num(env, 'VISION_TIMEOUT_MS', 15_000),
+      maxBytes: num(env, 'VISION_MAX_BYTES', 3 * 1024 * 1024),
+    },
+    toolTimeoutMs: { camera: num(env, 'TOOL_TIMEOUT_CAMERA_MS', 25_000), other: num(env, 'TOOL_TIMEOUT_MS', 8_000) },
+  };
+}

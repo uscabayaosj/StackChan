@@ -1,0 +1,2756 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,7 +2,7 @@
+ # CMakeLists in this exact order for cmake to work correctly
+ cmake_minimum_required(VERSION 3.16)
+ 
+-set(PROJECT_VER "1.6.6")
++set(PROJECT_VER "1.6.24")
+ add_definitions(-DFIRMWARE_VERSION=\"${PROJECT_VER}\")
+ 
+ # Add this line to disable the specific warning
+@@ -24,3 +24,4 @@
+ 
+ include(cmake/wifi_station_overlay.cmake)
+ include(cmake/camera_capture_overlay.cmake)
++include(cmake/face_detection_overlay.cmake)
+--- /dev/null
++++ b/cmake/face_detection_overlay.cmake
+@@ -0,0 +1,21 @@
++# espressif/human_face_detect 0.2.1 and esp-dl 3.1.4 are pinned in main/idf_component.yml.
++# A CoreS3 desk test identified missed MSR proposals at the default threshold:
++# https://github.com/7H3-CH053N/StackChan-CustomFW/blob/main/firmware/xiaozhi-esp32.patch#L365-L371
++# Only broaden stage-one proposals here. Stage two still verifies each real face.
++idf_component_get_property(face_component_dir espressif__human_face_detect COMPONENT_DIR)
++idf_component_get_property(face_component_lib espressif__human_face_detect COMPONENT_LIB)
++set(face_overlay_dir "${CMAKE_BINARY_DIR}/stackchan-overlays")
++set(face_source "${face_component_dir}/human_face_detect.cpp")
++set(face_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/human-face-detect-msr.patch")
++file(MAKE_DIRECTORY "${face_overlay_dir}")
++execute_process(
++    COMMAND patch --batch -F 0 -o "${face_overlay_dir}/human_face_detect.cpp.new" "${face_source}" "${face_patch}"
++    RESULT_VARIABLE face_patch_status OUTPUT_QUIET ERROR_VARIABLE face_patch_error)
++if(NOT face_patch_status EQUAL 0)
++    message(FATAL_ERROR "StackChan face detector overlay could not be applied: ${face_patch_error}")
++endif()
++configure_file("${face_overlay_dir}/human_face_detect.cpp.new" "${face_overlay_dir}/human_face_detect.cpp" COPYONLY)
++get_target_property(face_sources ${face_component_lib} SOURCES)
++list(FILTER face_sources EXCLUDE REGEX "(^|/)human_face_detect\\.cpp$")
++set_property(TARGET ${face_component_lib} PROPERTY SOURCES ${face_sources} "${face_overlay_dir}/human_face_detect.cpp")
++set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${face_source}" "${face_patch}")
+--- a/dependencies.lock
++++ b/dependencies.lock
+@@ -58,7 +58,7 @@
+       type: service
+     version: 0.3.4
+   78/uart-uhci:
+-    component_hash: 200eb10923cb750dddbee5504a36d7b5eaac611afbf52fb9066dc7130159f696
++    component_hash: d33e4cd9f634a561bfddcad79be6fa30f0ee279a9e4d1a2df91eabccbca5d362
+     dependencies:
+     - name: idf
+       require: private
+@@ -66,7 +66,7 @@
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 0.2.1
++    version: 0.2.2
+   78/xiaozhi-fonts:
+     component_hash: 19ee829a7439702e18084a313b7b86017d3b8d17a094684575edc76bb6d11023
+     dependencies:
+@@ -152,7 +152,7 @@
+       type: service
+     version: 0.5.3
+   espressif/dl_fft:
+-    component_hash: 7dadbd644c0d7ba4733cc3726ec4cff6edf27b043725e1115861dec1609a3d28
++    component_hash: 965be7152132b365061abf5fc5fc7b85e525f73b94a204cdda61cfe9572c0d77
+     dependencies:
+     - name: idf
+       require: private
+@@ -160,7 +160,24 @@
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 0.3.1
++    version: 0.8.0
++  espressif/esp-dl:
++    component_hash: 6d4bea514a682c180cc8c847aec1a0024bb80861daf0a6c8adfec5b0ad592987
++    dependencies:
++    - name: espressif/esp_new_jpeg
++      registry_url: https://components.espressif.com
++      require: private
++      version: ^0.6.1
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32s3
++    - esp32p4
++    version: 3.1.4
+   espressif/esp-dsp:
+     component_hash: 42dce32d46ac93dc11f60d368e29a830e9661c7345d794b8a45c343479cae636
+     dependencies:
+@@ -246,7 +263,7 @@
+     - esp32c61
+     version: 1.5.2
+   espressif/esp_codec_dev:
+-    component_hash: 0d9e9bc288156eb55f79338d312e1ebf8c9dfbd5e7d13ef0f20ccb031b4e15cf
++    component_hash: df70f10af8d7b922add7b9d07372c9c97ab356e58d72b7a892050227c2d44348
+     dependencies:
+     - name: idf
+       require: private
+@@ -254,7 +271,7 @@
+     source:
+       registry_url: https://components.espressif.com/
+       type: service
+-    version: 1.5.4
++    version: 1.5.11
+   espressif/esp_image_effects:
+     component_hash: a35037db02862d3cef6f72c25f422ae62da6e6c88219ce03c9ea24e0315ceaaa
+     dependencies:
+@@ -304,7 +321,7 @@
+       type: service
+     version: 2.0.2
+   espressif/esp_jpeg:
+-    component_hash: defb83669293cbf86d0fa86b475ba5517aceed04ed70db435388c151ab37b5d7
++    component_hash: 47d19eac5f76fac06798c04f4d2579c7ab26fd33280ed10f43d8895175376bdf
+     dependencies:
+     - name: idf
+       require: private
+@@ -312,7 +329,7 @@
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 1.3.1
++    version: 1.3.2
+   espressif/esp_lcd_axs15231b:
+     component_hash: e614bd75827e95800e39df1ba9474166060ab26c3807d06df9cc312a27021cda
+     dependencies:
+@@ -584,7 +601,7 @@
+     - esp32c6
+     version: 0.6.1
+   espressif/esp_sccb_intf:
+-    component_hash: c071b189e49f40940722aea01a5489f873385cc39cd5b14012341135b85d1a9d
++    component_hash: fcf118cd29a1caaf3b09bacd99975bc035c996b470474dfb950202c16e06d7b5
+     dependencies:
+     - name: idf
+       require: private
+@@ -592,7 +609,7 @@
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 0.0.8
++    version: 1.0.0
+   espressif/esp_video:
+     component_hash: fbad1178f39cb5a81ed808c460c851b911a9858db833e2e667ada988022c0660
+     dependencies:
+@@ -643,8 +660,19 @@
+     - esp32c6
+     - esp32c61
+     version: 1.3.1
++  espressif/human_face_detect:
++    component_hash: f648d741db5d3bf6a7b8ef9e76e8a301cd1a5959545fb6bce1037bf87e6128f2
++    dependencies:
++    - name: espressif/esp-dl
++      registry_url: https://components.espressif.com
++      require: private
++      version: ^3.1.1
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 0.2.1
+   espressif/i2c_bus:
+-    component_hash: 804ec068d163570fd367b279a310ca383484630d2310c586b50def0bcf21de13
++    component_hash: 483112c1619c54c38d0b734fb25f1678733267858a77b7af2f48cc7db6dbbd84
+     dependencies:
+     - name: espressif/cmake_utilities
+       registry_url: https://components.espressif.com
+@@ -656,7 +684,7 @@
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 1.5.1
++    version: 1.5.2
+   espressif/iot_eth:
+     component_hash: ffcea72f079264b6905e428a406cb6d2512dfede10d100c49d3486dd78dc1873
+     dependencies:
+@@ -672,23 +700,31 @@
+       type: service
+     version: 0.1.0
+   espressif/iot_usbh_cdc:
+-    component_hash: 6b30e8eeef1a3320a3bc0c27980c62826ed134b681be6f424366f3d78c291814
+-    dependencies:
++    component_hash: f6cb3cdb7cf0b1434a4edcca0ecfabc7bf997b5572995ebbd72570c2183ef82c
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: '*'
++    - name: espressif/usb
++      registry_url: https://components.espressif.com
++      require: public
++      rules:
++      - if: idf_version >=6.0
++      - if: target not in ["linux"]
++      version: ^1.4.0
+     - name: idf
+       require: private
+       version: '>=5.1'
+-    - name: espressif/cmake_utilities
+-      registry_url: https://components.espressif.com
+-      require: private
+-      version: '*'
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+     targets:
+     - esp32s2
+     - esp32s3
++    - esp32s31
+     - esp32p4
+-    version: 3.0.0
++    version: 3.1.1
+   espressif/iot_usbh_rndis:
+     component_hash: 0d91d9c79980fe0d2b59ecae9341d91852b7eb3356cc0e708f76425a3604ff5b
+     dependencies:
+@@ -872,6 +908,7 @@
+ - espressif/bmi270_sensor
+ - espressif/button
+ - espressif/cmake_utilities
++- espressif/esp-dl
+ - espressif/esp-sr
+ - espressif/esp32-camera
+ - espressif/esp_audio_codec
+@@ -898,6 +935,7 @@
+ - espressif/esp_mmap_assets
+ - espressif/esp_new_jpeg
+ - espressif/esp_video
++- espressif/human_face_detect
+ - espressif/iot_usbh_rndis
+ - espressif/knob
+ - espressif/led_strip
+@@ -910,6 +948,6 @@
+ - waveshare/esp_lcd_sh8601
+ - waveshare/esp_lcd_touch_cst9217
+ - wvirgil123/sscma_client
+-manifest_hash: 350e17991f1a3226438480b027525b7cde67c34ed4ec6c5847cdfcb22e18dc4a
++manifest_hash: 2b6811c69d1657a98521d884c0db27a81b53a911f72b142062c6a7aaa541b09d
+ target: esp32s3
+ version: 2.0.0
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -294,6 +294,7 @@
+                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                     WHOLE_ARCHIVE
+                     PRIV_REQUIRES
++                        espressif__human_face_detect
+                         wpa_supplicant
+                         esp_pm
+                         esp_psram
+@@ -542,5 +543,10 @@
+     message(STATUS "Assets partition not found, using v1 partition table")
+ endif()
+ 
++# The pinned esp_video V4L2 dequeue blocks forever. The local DVP reader uses
++# the underlying timed receive from the same driver.
++idf_component_get_property(video_dir espressif__esp_video COMPONENT_DIR)
++target_include_directories(${COMPONENT_LIB} PRIVATE "${video_dir}")
++
+ # UCL CAT profile 157, retrieved 2026-11-04. Public trust anchors only.
+ target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/hal/utils/wifi_connect/certs/ucl-eduroam.pem" TEXT)
+--- a/main/hal/board/cores3_audio_codec.cc
++++ b/main/hal/board/cores3_audio_codec.cc
+@@ -1,4 +1,7 @@
+ #include "cores3_audio_codec.h"
++#include "hal/speaker_tracking.h"
++#include "hal/speaker_bearing.h"
++#include "application.h"
+ 
+ #include <esp_log.h>
+ #include <driver/i2c_master.h>
+@@ -102,8 +105,10 @@
+     i2s_chan_config_t chan_cfg = {
+         .id = I2S_NUM_0,
+         .role = I2S_ROLE_MASTER,
+-        .dma_desc_num = AUDIO_CODEC_DMA_DESC_NUM,
+-        .dma_frame_num = AUDIO_CODEC_DMA_FRAME_NUM,
++        // Both DMA directions now carry eight bytes per sample period.
++        // Thirty milliseconds of buffering leaves internal SRAM for voice and TLS.
++        .dma_desc_num = 4,
++        .dma_frame_num = 180,
+         .auto_clear_after_cb = true,
+         .auto_clear_before_cb = false,
+         .intr_priority = 0,
+@@ -186,9 +191,18 @@
+     ESP_LOGI(TAG, "Duplex channels created");
+ }
+ 
++void CoreS3AudioCodec::Start() {
++    std::lock_guard<std::mutex> lock(volume_mutex_);
++    AudioCodec::Start();
++    if (output_enabled_) ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
++    current_volume_.store(output_volume_, std::memory_order_relaxed);
++}
++
+ void CoreS3AudioCodec::SetOutputVolume(int volume) {
+-    ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
++    std::lock_guard<std::mutex> lock(volume_mutex_);
++    if (output_enabled_) ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
+     AudioCodec::SetOutputVolume(volume);
++    current_volume_.store(output_volume_, std::memory_order_relaxed);
+ }
+ 
+ void CoreS3AudioCodec::EnableInput(bool enable) {
+@@ -198,16 +212,15 @@
+     if (enable) {
+         esp_codec_dev_sample_info_t fs = {
+             .bits_per_sample = 16,
+-            .channel = 2,
+-            .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
++            .channel = 4,
++            .channel_mask = 0x0f,
+             .sample_rate = (uint32_t)output_sample_rate_,
+             .mclk_multiple = 0,
+         };
+-        if (input_reference_) {
+-            fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
+-        }
+         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
+-        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
++        // Gain masks address ADC microphones. MIC3 is the analog echo reference.
++        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_,
++            ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) | ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), input_gain_));
+     } else {
+         ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+     }
+@@ -215,20 +228,23 @@
+ }
+ 
+ void CoreS3AudioCodec::EnableOutput(bool enable) {
++    std::lock_guard<std::mutex> lock(volume_mutex_);
+     if (enable == output_enabled_) {
+         return;
+     }
+     if (enable) {
+-        // Play 16bit 1 channel
++        // Capture uses four 16-bit slots. The AW88298 shares BCLK/LRCLK
++        // and must also be programmed for a 64-clock frame on every open.
+         esp_codec_dev_sample_info_t fs = {
+-            .bits_per_sample = 16,
+-            .channel = 1,
+-            .channel_mask = 0,
++            .bits_per_sample = 32,
++            .channel = 2,
++            .channel_mask = 3,
+             .sample_rate = (uint32_t)output_sample_rate_,
+             .mclk_multiple = 0,
+         };
+         ESP_ERROR_CHECK(esp_codec_dev_open(output_dev_, &fs));
+         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
++        ESP_LOGI(TAG, "Speaker enabled at volume %d, 64 clocks per frame", output_volume_);
+     } else {
+         ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+     }
+@@ -236,10 +252,49 @@
+ }
+ 
+ int CoreS3AudioCodec::Read(int16_t* dest, int samples) {
+-    if (input_enabled_) {
+-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+-    }
+-    return samples;
++    if (!input_enabled_) return 0;
++    const size_t frames = samples / input_channels_;
++    microphone_slots_.resize(frames * 4);
++    if (esp_codec_dev_read(input_dev_, microphone_slots_.data(), microphone_slots_.size() * sizeof(int16_t))
++        != ESP_CODEC_DEV_OK) return 0;
++
++    // CoreS3 slot order is MIC1, echo reference (MIC3), MIC2, unused MIC4.
++    const uint32_t now = esp_timer_get_time() / 1000;
++    const uint32_t playback = LastVoicedOutputMs();
++    speaker_tracking::Observe(microphone_slots_.data(), frames, playback);
++    // Preserve the proven wake/reference channels. During human speech, align
++    // the second microphone before summing to avoid cancelling speech off-axis.
++    int align = Application::GetInstance().GetDeviceState() == kDeviceStateListening &&
++        (!playback || now-playback>360) ? speaker_tracking::SpeechAlignment() : speaker_tracking::kUnknownAlignment;
++    for (size_t frame = 0; frame < frames; ++frame) {
++        dest[frame*input_channels_] = speaker_tracking::conversationSample(microphone_slots_.data(),frames,frame,align);
++        if (input_reference_) dest[frame * input_channels_ + 1] = microphone_slots_[frame * 4 + 1];
++    }
++    if (playback && now - playback < 180 && frames) {
++        // MIC3 is wired across the physical speaker output. A peak-to-peak
++        // reading excludes the ADC's DC bias. Only levels go to the serial log.
++        int low = INT16_MAX, high = INT16_MIN;
++        for (size_t i = 0; i < frames; ++i) {
++            const int reference = microphone_slots_[4 * i + 1];
++            low = std::min(low, reference);
++            high = std::max(high, reference);
++        }
++        feedback_peak_ = std::max(feedback_peak_, high - low);
++        if (!feedback_started_ms_) feedback_started_ms_ = now;
++    }
++    if (feedback_started_ms_ && now - feedback_started_ms_ >= 350) {
++        if (!last_feedback_log_ms_ || now - last_feedback_log_ms_ >= 1100) {
++            int status = 0;
++            if (esp_codec_dev_read_reg(output_dev_, 0x01, &status) == ESP_CODEC_DEV_OK) {
++                ESP_LOGI(TAG, "Speaker feedback peak-to-peak %d, PLL lock %d, amp switching %d",
++                    feedback_peak_, status & 1, (status >> 8) & 1);
++            }
++            last_feedback_log_ms_ = now;
++        }
++        feedback_peak_ = 0;
++        feedback_started_ms_ = 0;
++    }
++    return frames * input_channels_;
+ }
+ 
+ int CoreS3AudioCodec::Write(const int16_t* data, int samples) {
+@@ -259,7 +314,21 @@
+                 last_voiced_output_ms_.store(esp_timer_get_time() / 1000, std::memory_order_relaxed);
+             }
+         }
+-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
++        // Put each signed mono sample in the high 16 bits of both I2S words.
++        for (int offset = 0; offset < samples;) {
++            const int count = std::min(samples - offset, static_cast<int>(speaker_slots_.size() / 2));
++            for (int i = 0; i < count; ++i) {
++                const int32_t sample = static_cast<int32_t>(data[offset + i]) * 65536;
++                speaker_slots_[i * 2] = sample;
++                speaker_slots_[i * 2 + 1] = sample;
++            }
++            const int error = esp_codec_dev_write(output_dev_, speaker_slots_.data(), count * 2 * sizeof(int32_t));
++            if (error != ESP_CODEC_DEV_OK) {
++                ESP_LOGE(TAG, "Speaker write failed (%d)", error);
++                return offset;
++            }
++            offset += count;
++        }
+     }
+     return samples;
+ }
+--- a/main/hal/board/cores3_audio_codec.h
++++ b/main/hal/board/cores3_audio_codec.h
+@@ -3,7 +3,10 @@
+ 
+ #include "audio_codec.h"
+ 
++#include <array>
+ #include <atomic>
++#include <mutex>
++#include <vector>
+ #include <esp_codec_dev.h>
+ #include <esp_codec_dev_defaults.h>
+ 
+@@ -18,8 +21,15 @@
+ 
+     esp_codec_dev_handle_t output_dev_ = nullptr;
+     esp_codec_dev_handle_t input_dev_ = nullptr;
++    std::mutex volume_mutex_;
++    inline static std::atomic<int> current_volume_{-1};
+     std::atomic<uint32_t> last_voiced_output_ms_{0};
+     std::atomic<int> playback_level_{0};
++    std::vector<int16_t> microphone_slots_;
++    std::array<int32_t, 240 * 2> speaker_slots_{};
++    uint32_t last_feedback_log_ms_ = 0;
++    uint32_t feedback_started_ms_ = 0;
++    int feedback_peak_ = 0;
+ 
+     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
+ 
+@@ -34,7 +44,9 @@
+ 
+     uint32_t LastVoicedOutputMs() const { return last_voiced_output_ms_.load(std::memory_order_relaxed); }
+     int PlaybackLevel() const { return playback_level_.load(std::memory_order_relaxed); }
++    static int CurrentVolume() { return current_volume_.load(std::memory_order_relaxed); }
+ 
++    void Start() override;
+     virtual void SetOutputVolume(int volume) override;
+     virtual void EnableInput(bool enable) override;
+     virtual void EnableOutput(bool enable) override;
+--- /dev/null
++++ b/main/hal/board/face_luma.c
+@@ -0,0 +1,71 @@
++#include "private_include/esp_video.h"
++#include "freertos/FreeRTOS.h"
++
++static uint8_t clipped(int x) { return x < 0 ? 0 : x > 255 ? 255 : (uint8_t)x; }
++
++static inline void store_rgb(uint8_t* pixel, int y, int cb, int cr)
++{
++    const int luminance = 298 * (y - 16);
++    cb -= 128;
++    cr -= 128;
++    pixel[0] = clipped((luminance + 409*cr + 128) >> 8);
++    pixel[1] = clipped((luminance - 100*cb - 208*cr + 128) >> 8);
++    pixel[2] = clipped((luminance + 516*cb + 128) >> 8);
++}
++
++static void sample_view(const uint8_t* source, unsigned stride, uint8_t* output,
++                        unsigned w, unsigned h, unsigned left, unsigned top,
++                        unsigned source_w, unsigned source_h)
++{
++    // The normal 320x240 sensor frame is reduced to 160x120. Average each
++    // complete YUYV block, including both chroma rows, before converting it.
++    if (source_w == 2*w && source_h == 2*h && !(left & 1u)) {
++        for (unsigned y = 0; y < h; ++y) {
++            const uint8_t* a = source + (top + 2*y)*stride + 2*left;
++            const uint8_t* b = a + stride;
++            for (unsigned x = 0; x < w; ++x, a += 4, b += 4, output += 3) {
++                store_rgb(output, (a[0]+a[2]+b[0]+b[2]+2)/4,
++                          (a[1]+b[1]+1)/2, (a[3]+b[3]+1)/2);
++            }
++        }
++        return;
++    }
++
++    const bool native = source_w == w && source_h == h;
++    for (unsigned y = 0; y < h; ++y) {
++        const unsigned sy = top + (native ? y : (2*y+1)*source_h/(2*h));
++        const uint8_t* row = source + sy*stride;
++        for (unsigned x = 0; x < w; ++x, output += 3) {
++            const unsigned sx = left + (native ? x : (2*x+1)*source_w/(2*w));
++            const uint8_t* pair = row + (sx & ~1u)*2;
++            store_rgb(output, pair[(sx & 1u)*2], pair[1], pair[3]);
++        }
++    }
++}
++
++// Region coordinates are in the full tracking image (w x h). Sample the
++// original sensor buffer directly so a cropped view retains native detail.
++bool read_fresh_dvp_rgb_region(uint8_t* output, unsigned w, unsigned h, unsigned sw, unsigned sh,
++                               unsigned x, unsigned y, unsigned view_w, unsigned view_h)
++{
++    struct esp_video* video = esp_video_device_get_object("DVP");
++    if (!video || !output || !w || !h || w > sw || h > sh || (sw & 1u) ||
++        !view_w || !view_h || x >= w || y >= h || view_w > w-x || view_h > h-y) return false;
++    const unsigned left = x*sw/w, top = y*sh/h;
++    const unsigned source_w = (x+view_w)*sw/w - left, source_h = (y+view_h)*sh/h - top;
++    for (unsigned i = 0; i < 2; ++i) {
++        struct esp_video_buffer_element* frame =
++            esp_video_recv_element(video, V4L2_BUF_TYPE_VIDEO_CAPTURE, pdMS_TO_TICKS(140));
++        if (!frame) return false;
++        const bool usable = frame->buffer && frame->valid_size >= (size_t)sw*sh*2;
++        if (i && usable) sample_view(frame->buffer, sw*2, output, w, h, left, top, source_w, source_h);
++        if (esp_video_queue_element(video, V4L2_BUF_TYPE_VIDEO_CAPTURE, frame) != ESP_OK) return false;
++        if (i && !usable) return false;
++    }
++    return true;
++}
++
++bool read_fresh_dvp_rgb(uint8_t* output, unsigned w, unsigned h, unsigned sw, unsigned sh)
++{
++    return read_fresh_dvp_rgb_region(output,w,h,sw,sh,0,0,w,h);
++}
+--- a/main/hal/board/stackchan.cc
++++ b/main/hal/board/stackchan.cc
+@@ -18,6 +18,7 @@
+ #include <esp_rom_sys.h>
+ #include <esp_timer.h>
+ #include <algorithm>
++#include <atomic>
+ #include <mutex>
+ #include "stackchan_camera.h"
+ #include "hal_bridge.h"
+@@ -208,12 +209,17 @@
+ 
+     void SetBrightnessImpl(uint8_t brightness) override
+     {
+-        pmic_->SetBrightness(target_brightness_);
+-        brightness_ = target_brightness_;
+-    }
++        const uint8_t target = target_brightness_;
++        pmic_->SetBrightness(target);
++        brightness_ = target;
++        applied_.store(target, std::memory_order_relaxed);
++    }
++
++    uint8_t AppliedBrightness() const { return applied_.load(std::memory_order_relaxed); }
+ 
+ private:
+     Pmic* pmic_;
++    std::atomic<uint8_t> applied_{0};
+ };
+ 
+ class Aw9523 : public I2cDevice {
+@@ -840,7 +846,7 @@
+     auto& board    = Board::GetInstance();
+     auto backlight = board.GetBacklight();
+     if (backlight) {
+-        return backlight->brightness();
++        return static_cast<CustomBacklight*>(backlight)->AppliedBrightness();
+     } else {
+         return 0;
+     }
+@@ -852,7 +858,8 @@
+     auto audio_codec = board.GetAudioCodec();
+     if (audio_codec) {
+         Settings settings("audio", false);
+-        const int persisted_volume = settings.GetInt("output_volume", audio_codec->output_volume());
++        const int current = CoreS3AudioCodec::CurrentVolume();
++        const int persisted_volume = settings.GetInt("output_volume", current >= 0 ? current : 70);
+         audio_codec->SetOutputVolume(volume);
+         if (!permanent) {
+             Settings writable_settings("audio", true);
+@@ -864,6 +871,9 @@
+ 
+ uint8_t hal_bridge::board_get_speaker_volume()
+ {
++    const int current = CoreS3AudioCodec::CurrentVolume();
++    if (current >= 0) return current;
++    // The setup UI and relay can start before the voice codec has loaded its setting.
+     int volume = 70;
+     Settings settings("audio", false);
+     volume = settings.GetInt("output_volume", volume);
+--- a/main/hal/board/stackchan_camera.cc
++++ b/main/hal/board/stackchan_camera.cc
+@@ -423,6 +423,18 @@
+     return true;
+ }
+ 
++extern "C" bool read_fresh_dvp_rgb_region(uint8_t*, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned);
++
++bool StackChanCamera::TryFaceRgb(uint8_t* output, unsigned width, unsigned height, unsigned viewX,
++                                unsigned viewY, unsigned viewWidth, unsigned viewHeight)
++{
++    std::unique_lock lock(capture_mutex_, std::try_to_lock);
++    if (!lock || video_fd_ < 0 || !streaming_on_ || !output ||
++        (sensor_format_ != V4L2_PIX_FMT_YUV422P && sensor_format_ != V4L2_PIX_FMT_YUYV)) return false;
++    return read_fresh_dvp_rgb_region(output, width, height, frame_.width, frame_.height,
++                                     viewX, viewY, viewWidth, viewHeight);
++}
++
+ bool StackChanCamera::Capture()
+ {
+     auto lock = LockCapture();
+--- a/main/hal/board/stackchan_camera.h
++++ b/main/hal/board/stackchan_camera.h
+@@ -47,6 +47,8 @@
+     virtual void SetExplainUrl(const std::string& url, const std::string& token);
+     virtual bool Capture() override;
+     bool StreamCaptures();
++    bool TryFaceRgb(uint8_t* output, unsigned width, unsigned height, unsigned viewX,
++                    unsigned viewY, unsigned viewWidth, unsigned viewHeight);
+     std::unique_lock<std::mutex> LockCapture() { return std::unique_lock(capture_mutex_); }
+     bool TakeCompanionJpeg(bool preview, int quality, uint8_t** out, size_t* length);
+ 
+--- a/main/hal/board/stackchan_display.cc
++++ b/main/hal/board/stackchan_display.cc
+@@ -267,7 +267,7 @@
+ #ifdef CONFIG_STACKCHAN_SKIN_SAOIRSE
+     conversation_timer_ = lv_timer_create([](lv_timer_t* timer) {
+         static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer))->UpdateConversationFace();
+-    }, 33, this);
++    }, 66, this);  // Sample the playback envelope at the speaking eye animation's 15 Hz.
+ #endif
+     stackchan.addModifier(std::make_unique<BreathModifier>());
+     blink_modifier_id_ = stackchan.addModifier(std::make_unique<BlinkModifier>());
+@@ -314,27 +314,6 @@
+ void StackChanAvatarDisplay::LvglUnlock()
+ {
+     Unlock();
+-}
+-
+-void StackChanAvatarDisplay::CreateIdleMotionModifier()
+-{
+-    auto& stackchan = GetStackChan();
+-
+-    switch (idle_motion_level_) {
+-        case 0:
+-            idle_motion_modifier_id_ = -1;
+-            return;
+-        case 1:
+-            idle_motion_modifier_id_ = stackchan.addModifier(std::make_unique<IdleMotionModifier>(8000, 12000));
+-            return;
+-        case 3:
+-            idle_motion_modifier_id_ = stackchan.addModifier(std::make_unique<IdleMotionModifier>(2000, 4000));
+-            return;
+-        case 2:
+-        default:
+-            idle_motion_modifier_id_ = stackchan.addModifier(std::make_unique<IdleMotionModifier>());
+-            return;
+-    }
+ }
+ 
+ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+@@ -372,12 +351,6 @@
+         is_sleeping_ = true;
+         // avatar.mouth().setWeight(10);
+ 
+-        // Stop idle motion
+-        ESP_LOGW(TAG, "Stop idle motion");
+-        if (idle_motion_modifier_id_ >= 0) {
+-            stackchan.removeModifier(idle_motion_modifier_id_);
+-            idle_motion_modifier_id_ = -1;
+-        }
+         if (idle_expression_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_expression_modifier_id_);
+             idle_expression_modifier_id_ = -1;
+@@ -681,23 +654,20 @@
+     }
+ 
+     if (is_idle) {
+-        // Start idle motion
+-        ESP_LOGW(TAG, "Start idle motion");
+-        if (idle_motion_modifier_id_ < 0 && idle_motion_level_ > 0) {
+-            CreateIdleMotionModifier();
+-        }
+         if (idle_expression_modifier_id_ < 0) {
+-            idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
++            // Keep the microphones and camera facing the last speaker while the avatar glances around.
++            uint32_t min_ms = 2000, max_ms = 6000;
++            if (idle_motion_level_ == 1) {
++                min_ms = 8000;
++                max_ms = 12000;
++            } else if (idle_motion_level_ == 3) {
++                max_ms = 4000;
++            }
++            idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>(min_ms, max_ms));
+         }
+ 
+         _is_xiaozhi_idle = true;
+     } else {
+-        // Stop idle motion
+-        ESP_LOGW(TAG, "Stop idle motion");
+-        if (idle_motion_modifier_id_ >= 0) {
+-            stackchan.removeModifier(idle_motion_modifier_id_);
+-            idle_motion_modifier_id_ = -1;
+-        }
+         if (idle_expression_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_expression_modifier_id_);
+             idle_expression_modifier_id_ = -1;
+--- a/main/hal/board/stackchan_display.h
++++ b/main/hal/board/stackchan_display.h
+@@ -16,7 +16,6 @@
+     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
+     esp_lcd_panel_handle_t panel_       = nullptr;
+     int speaking_modifier_id_           = -1;
+-    int idle_motion_modifier_id_        = -1;
+     int idle_expression_modifier_id_    = -1;
+     int blink_modifier_id_              = -1;
+     bool is_sleeping_                   = false;
+@@ -50,7 +49,6 @@
+     lv_obj_t* companion_camera_indicator_ = nullptr;
+     lv_timer_t* companion_camera_timer_ = nullptr;
+ 
+-    void CreateIdleMotionModifier();
+     void HidePhotoPreview();
+     void ShowPhotoPreview();
+     void SchedulePreviewTimer(uint32_t delayMs);
+--- a/main/hal/companion_relay.cpp
++++ b/main/hal/companion_relay.cpp
+@@ -1,6 +1,7 @@
+ /*
+  * SPDX-License-Identifier: MIT
+  */
++#include "hal/face_centering.h"
+ #include "application.h"
+ #include "audio_codec.h"
+ #include "backlight.h"
+@@ -20,6 +21,7 @@
+ #include <esp_timer.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
++#include <atomic>
+ #include <cstring>
+ #include <strings.h>
+ #include <memory>
+@@ -28,6 +30,8 @@
+ namespace {
+ 
+ using Jpeg = std::unique_ptr<uint8_t, decltype(&heap_caps_free)>;
++
++std::atomic<uint32_t> lastCameraMs{0};
+ 
+ bool wifiReady()
+ {
+@@ -68,6 +72,22 @@
+ {
+     if (!id || strlen(id) != 36) return false;
+     return std::string(id).find_first_not_of("0123456789abcdef-") == std::string::npos;
++}
++
++void reportLevels(esp_http_client_handle_t client)
++{
++    // The HTTP client reuses headers across polls and command acknowledgements.
++    // Replace both readings immediately before sending either request.
++    const auto setLevel = [client](const char* key, int level) {
++        if (level >= 0 && level <= 100) {
++            esp_http_client_set_header(client, key, std::to_string(level).c_str());
++        } else {
++            esp_http_client_delete_header(client, key);
++        }
++    };
++    setLevel("X-Saoirse-Volume", hal_bridge::board_get_speaker_volume());
++    setLevel("X-Saoirse-Brightness", Board::GetInstance().GetBacklight()
++             ? hal_bridge::board_get_backlight_brightness() : -1);
+ }
+ 
+ bool execute(const cJSON* body, Jpeg& jpeg, size_t& length, int64_t& liveUntil)
+@@ -82,6 +102,7 @@
+         LvglLockGuard lock;
+         auto& motion = GetStackChan().motion();
+         if (motion.isModifyLocked()) return false;
++        face_centering::ManualOverride();
+         motion.yawServo().moveWithSpeed(yaw->valueint * 10, 150);
+         motion.pitchServo().moveWithSpeed(pitch->valueint * 10, 150);
+         return true;
+@@ -96,8 +117,14 @@
+                 codec->SetOutputVolume(value->valueint);
+                 return true;
+             }
+-        } else if (auto* backlight = board.GetBacklight()) {
+-            backlight->SetBrightness(value->valueint, true);
++        } else if (board.GetBacklight()) {
++            hal_bridge::board_set_backlight_brightness(value->valueint, true);
++            // This board applies the requested percentage on its next backlight timer tick.
++            const auto deadline = esp_timer_get_time() + 180000;
++            while (hal_bridge::board_get_backlight_brightness() != value->valueint) {
++                if (esp_timer_get_time() >= deadline) return false;
++                vTaskDelay(pdMS_TO_TICKS(10));
++            }
+             return true;
+         }
+         return false;
+@@ -115,6 +142,7 @@
+     const bool live = action != "photo";
+     auto* display = dynamic_cast<StackChanAvatarDisplay*>(board.GetDisplay());
+     if (!display || !display->ShowCompanionCameraIndicator(live)) return false;
++    lastCameraMs.store(static_cast<uint32_t>(esp_timer_get_time()/1000));
+     uint8_t* raw = nullptr;
+     const int64_t captureStarted = esp_timer_get_time();
+     const bool ok = camera->TakeCompanionJpeg(action == "photo", live ? 35 : 80, &raw, &length);
+@@ -165,6 +193,7 @@
+             esp_http_client_delete_header(client, "X-Command-Id");
+             esp_http_client_delete_header(client, "X-Command-Result");
+             esp_http_client_delete_header(client, "Content-Type");
++            reportLevels(client);
+             if (esp_http_client_perform(client) != ESP_OK) break;
+             const int status = esp_http_client_get_status_code(client);
+             if (status == 204) {
+@@ -191,6 +220,7 @@
+             esp_http_client_set_header(client, "X-Command-Result", ok ? "ok" : "error");
+             esp_http_client_set_header(client, "Content-Type", length ? "image/jpeg" : "application/octet-stream");
+             esp_http_client_set_post_field(client, length ? reinterpret_cast<const char*>(jpeg.get()) : "", length);
++            reportLevels(client);
+             const auto sent = esp_http_client_perform(client);
+             esp_http_client_set_post_field(client, nullptr, 0);
+             if (sent != ESP_OK) break;
+@@ -202,6 +232,14 @@
+ 
+ }  // namespace
+ 
++bool stackchan_wifi_can_roam()
++{
++    const auto state=Application::GetInstance().GetDeviceState();
++    const uint32_t last=lastCameraMs.load();
++    return (state==kDeviceStateIdle || state==kDeviceStateUnknown) &&
++           (!last || uint32_t(esp_timer_get_time()/1000)-last>6000);
++}
++
+ void startCompanionRelay()
+ {
+     xTaskCreate(run, "companion", 10 * 1024, nullptr, 2, nullptr);
+--- /dev/null
++++ b/main/hal/face_aim.h
+@@ -0,0 +1,110 @@
++#pragma once
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++
++namespace face_aim {
++constexpr int width = 160, height = 120;
++struct InputSize { int width, height; };
++constexpr InputSize detectorInputSize(bool extended, bool crop)
++{
++    return extended && !crop ? InputSize{2*width,2*height} : InputSize{width,height};
++}
++
++// An exposure belongs to the listening turn in which it was requested.
++// An odd generation blocks new requests; resuming starts a new generation.
++class ReplyGate {
++public:
++    uint32_t turn() const { return generation.load(); }
++    bool accepts(uint32_t turn) const { return !(turn & 1u) && turn==generation.load(); }
++    void pause() { generation.fetch_or(1u); }
++    void resume() {
++        auto blocked=generation.load();
++        if (blocked & 1u) generation.compare_exchange_strong(blocked,blocked+1u);
++    }
++private:
++    std::atomic<uint32_t> generation{0};
++};
++struct Face { float x = 0, y = 0, size = 0; };
++inline bool consistent(Face a, Face b)
++{
++    return a.size > 0 && b.size > 0 &&
++        std::hypot(a.x-b.x,a.y-b.y) <= std::max(8.f, std::min(a.size,b.size)*.45f) &&
++        std::min(a.size,b.size) >= .6f*std::max(a.size,b.size);
++}
++inline int correction(float offset, int dimension, float field, int limit)
++{
++    if (std::abs(offset) <= dimension*.06f) return 0;
++    return std::clamp(static_cast<int>(std::lround(offset*field*.83f/dimension)), -limit, limit);
++}
++inline float bearingDegrees(float lag) { return -std::asin(std::clamp(lag/4.f,-1.f,1.f))*57.29578f; }
++
++// All planner positions are absolute servo angles, in tenths of a degree.
++struct SearchView { int yaw, pitch; };
++struct SearchPlan {
++    std::array<SearchView,3> views{};
++    int count=0;
++};
++
++inline SearchPlan planSearch(int anchorYaw, int anchorPitch, int lastPitch,
++                             float bearing, bool hasBearing, bool extended=true)
++{
++    constexpr int sideYaw=220;
++    constexpr int maxPitchStep=240;
++    const int pitch=std::clamp(std::clamp(lastPitch,anchorPitch-maxPitchStep,anchorPitch+maxPitchStep),30,700);
++    const int secondPitch=std::abs(lastPitch-pitch)>=120
++        ? std::clamp(std::clamp(lastPitch,pitch-maxPitchStep,pitch+maxPitchStep),30,700)
++        : std::clamp(pitch+(pitch<270 ? 160 : -160),30,700);
++    const SearchView anchor{anchorYaw,anchorPitch};
++    SearchPlan plan;
++    // Nearby headings have substantial optical overlap. A different tilt still
++    // counts as a new view, e.g. when the robot is on a desk below the speaker.
++    auto overlaps=[](SearchView a, SearchView b) {
++        return std::abs(a.yaw-b.yaw)<160 && std::abs(a.pitch-b.pitch)<120;
++    };
++    auto add=[&](SearchView view) {
++        if (plan.count==(extended ? int(plan.views.size()) : 2) || overlaps(view,anchor)) return;
++        for (int i=0;i<plan.count;++i) if (overlaps(view,plan.views[i])) return;
++        plan.views[plan.count++]=view;
++    };
++    if (hasBearing && std::isfinite(bearing) && std::abs(bearing)<=90.f) {
++        const int predicted=anchorYaw+int(std::lround(bearing*10));
++        // An out-of-travel source is not a reason to drive into the end stop.
++        // Scan the front sector if the projected heading is unreachable.
++        if (std::abs(predicted)<=900) {
++            const int nearestSide=predicted<0 ? -sideYaw : sideYaw;
++            const int hint=std::abs(predicted-nearestSide)<160 ? nearestSide : predicted;
++            add({hint,pitch});
++        }
++    }
++    // At the edge, approach the nearer side first and then cross straight ahead.
++    // From a normal conversational pose, check the opposite speaker first.
++    const int current=plan.count ? plan.views[0].yaw : anchorYaw;
++    const int side=current<0 ? -1 : 1;
++    const int firstSide=std::abs(current)>420 ? side : -side;
++    add({firstSide*sideYaw,pitch});
++    add({-firstSide*sideYaw,pitch});
++    if (extended) add({0,secondPitch});
++    return plan;
++}
++
++struct Candidates {
++    int count = 0;
++    float bestError = 1000, secondError = 1000;
++    Face best{};
++    void add(Face f, float expected)
++    {
++        ++count;
++        float error=std::abs((f.x/width-.5f)*62.f-expected);
++        if (error < bestError) { secondError=bestError; bestError=error; best=f; }
++        else secondError=std::min(secondError,error);
++    }
++    Face choose(bool bearing) const
++    {
++        if (count == 1) return best;
++        return bearing && bestError < 19 && secondError-bestError > 9 ? best : Face{};
++    }
++};
++}
+--- /dev/null
++++ b/main/hal/face_centering.cpp
+@@ -0,0 +1,305 @@
++#include "face_centering.h"
++#include "face_detector.h"
++#include "speaker_tracking.h"
++#include "application.h"
++#include "board/hal_bridge.h"
++#include "hal.h"
++#include <stackchan/stackchan.h>
++#include <atomic>
++#include <mutex>
++#include <strings.h>
++#include <esp_heap_caps.h>
++#include <esp_log.h>
++#include <esp_lvgl_port.h>
++#include "speaker_bearing.h"
++#include <esp_timer.h>
++#include <freertos/idf_additions.h>
++
++namespace face_centering {
++namespace {
++using namespace face_aim;
++constexpr char tag[]="FaceCenter";
++// Keep the native sensor detail for the second-stage landmark check.
++constexpr int nativeWidth=2*width, nativeHeight=2*height;
++constexpr size_t imageBytes=nativeWidth*nativeHeight*3;
++constexpr uint32_t lifetime = 6500;
++struct Job { uint32_t start, epoch, id, turn; speaker_tracking::Bearing bearing; bool wake, search, extended; };
++struct Pose { int yaw, pitch; };
++std::mutex queueMutex;
++TaskHandle_t worker=nullptr;
++Job pending{};
++bool hasJob=false, running=false;
++int lastFacePitch=150;  // Worker-owned, in tenths of a degree.
++std::atomic<uint32_t> manualEpoch{0}, manualTime{0}, lastConfirmed{0}, latestJob{0}, committedJob{0};
++ReplyGate replyGate;
++// These fields are accessed only while holding the LVGL/servo bus lock. The
++// regular motion tick can restore a temporary pose even if inference is delayed.
++struct ProvisionalPose { Pose anchor{}; uint32_t id=0, epoch=0, turn=0, deadline=0; } provisional;
++class ServoLock {
++public:
++    ServoLock() : acquired(lvgl_port_lock(35)) {}
++    ~ServoLock() { if (acquired) lvgl_port_unlock(); }
++    const bool acquired;
++};
++uint32_t nowMs() { return static_cast<uint32_t>(esp_timer_get_time()/1000); }
++void pause(int ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
++bool allowed(const Job& j)
++{
++    const auto state=Application::GetInstance().GetDeviceState();
++    const auto age=nowMs()-j.start;
++    return replyGate.accepts(j.turn) && latestJob.load()==j.id && manualEpoch.load()==j.epoch && age < lifetime &&
++        (state==kDeviceStateListening || (j.wake && (state==kDeviceStateConnecting || (state==kDeviceStateIdle && age<350))));
++}
++bool pose(Pose& p)
++{
++    ServoLock guard;
++    if (!guard.acquired) return false;
++    auto& m=GetStackChan().motion();
++    if (m.isModifyLocked()) return false;
++    return m.yawServo().readMeasuredAngle(p.yaw) && m.pitchServo().readMeasuredAngle(p.pitch);
++}
++bool near(Pose a, Pose b, int tolerance)
++{
++    return std::abs(a.yaw-b.yaw)<=tolerance && std::abs(a.pitch-b.pitch)<=tolerance;
++}
++void drive(Pose target)
++{
++    auto& motion=GetStackChan().motion();
++    motion.yawServo().moveWithSpeed(target.yaw,390);
++    motion.pitchServo().moveWithSpeed(target.pitch,300);
++    speaker_tracking::OnVisualMovement();
++}
++bool move(const Job& j, Pose target, const Pose* returnTo=nullptr)
++{
++    ServoLock guard;
++    if (!guard.acquired || !allowed(j) || GetStackChan().motion().isModifyLocked()) return false;
++    if (returnTo) {
++        // A newer bearing can interrupt an exploratory turn. Carry the original
++        // return pose forward until a face is confirmed or the search ends.
++        const bool inherit=provisional.id && provisional.epoch==j.epoch && provisional.turn==j.turn &&
++                           provisional.id!=committedJob.load();
++        provisional={inherit ? provisional.anchor : *returnTo,j.id,j.epoch,j.turn,j.start+lifetime};
++    }
++    drive(target);
++    return true;
++}
++void settle(const Job& j,Pose target)
++{
++    const auto start=nowMs();
++    unsigned settled=0;
++    while (allowed(j) && nowMs()-start<750) {
++        pause(45);
++        if (!allowed(j)) break;
++        Pose current{};
++        if (pose(current) && near(current,target,22)) {
++            if (++settled>=2) break;
++        } else settled=0;
++    }
++}
++bool releaseProbe(const Job& j,bool restore)
++{
++    ServoLock guard;
++    if (!guard.acquired || provisional.id!=j.id) return false;
++    if (restore && latestJob.load()!=j.id && replyGate.accepts(j.turn)) return false;
++    const bool returning=restore && manualEpoch.load()==j.epoch && !GetStackChan().motion().isModifyLocked();
++    if (returning) drive(provisional.anchor);
++    provisional={};
++    return returning;
++}
++void follow(const Job& j,HumanFaceDetect& detector,uint8_t* rgb)
++{
++    auto* camera=hal_bridge::board_get_camera();
++    Pose anchor{};
++    const auto dequeued=nowMs();
++    if (!allowed(j) || !camera) return;
++    while (!pose(anchor)) {
++        if (!allowed(j) || nowMs()-dequeued>=250) {
++            ESP_LOGW(tag,"could not measure initial pose");
++            return;
++        }
++        pause(25);
++    }
++    {
++        ServoLock guard;
++        if (guard.acquired && provisional.id && provisional.epoch==j.epoch && provisional.turn==j.turn &&
++            provisional.id!=committedJob.load()) {
++            provisional.id=j.id;
++            provisional.deadline=j.start+lifetime;
++        }
++    }
++    const bool directional=j.bearing.reliable && std::abs(j.bearing.lag)>speaker_tracking::kFrontalLag;
++    const float expected=directional ? bearingDegrees(j.bearing.lag) : 0;
++    const auto plan=planSearch(anchor.yaw,anchor.pitch,lastFacePitch,expected,directional,j.extended);
++    uint32_t firstFace=0, firstTurn=0;
++    int rejected=0;
++    bool zoom=false;
++    int zoomFrames=0, edgeChecks=0, light=-1, exposureFrames=0;
++    Face previous{};
++    Pose previousPose{};
++    int search=0, misses=0, fixes=0, frames=0, maxFaces=0;
++    bool seen=false;
++    float previousError=1000;
++    while (allowed(j) && frames < (j.extended ? 26 : 10)) {
++        Pose capture{}, after{};
++        if (!pose(capture)) { pause(35); continue; }
++        const int viewWidth=zoom ? width/2 : width, viewHeight=zoom ? height/2 : height;
++        int viewX=(width-viewWidth)/2;
++        const int viewY=(height-viewHeight)/2;
++        if (zoom && edgeChecks) {
++            const bool rightFirst=directional ? expected>0 : plan.views[0].yaw>0;
++            const bool right=edgeChecks==1 ? rightFirst : !rightFirst;
++            viewX=right ? width-viewWidth : 0;
++        }
++        const auto [inputWidth,inputHeight]=detectorInputSize(j.extended,zoom);
++        if (!allowed(j)) break;
++        if (!camera->TryFaceRgb(rgb,inputWidth,inputHeight,viewX*inputWidth/width,viewY*inputHeight/height,
++                                viewWidth*inputWidth/width,viewHeight*inputHeight/height)) { pause(30); continue; }
++        if (!allowed(j)) break;
++        ++frames;
++        if (zoom) ++zoomFrames;
++        const auto exposure=compensateExposure(rgb,inputWidth,inputHeight);
++        light=int(exposure.mean);
++        exposureFrames+=exposure.liftedShadows;
++        if (!allowed(j)) break;
++        int faces=0;
++        const float expectedInView=expected-(capture.yaw-anchor.yaw)/10.f;
++        const Face f=detect(detector,rgb,expectedInView,j.bearing.reliable,faces,viewX,viewY,viewWidth,viewHeight,inputWidth,inputHeight);
++        maxFaces=std::max(maxFaces,faces);
++        if (!allowed(j)) break;
++        // Verify the pose against this exposure before using its bearing. If
++        // another peripheral has the bus, try its encoder again before recapturing.
++        bool measured=pose(after);
++        if (!measured && allowed(j)) { pause(30); measured=pose(after); }
++        if (!allowed(j)) break;
++        if (!measured || !near(capture,after,25)) {
++            previous={};
++            if (++rejected>=3) break;
++            pause(45);
++            continue;
++        }
++        if (consistent(previous,f) && near(previousPose,capture,25)) {
++            const float dx=f.x-width*.5f, dy=height*.5f-f.y;
++            const float error=std::hypot(dx*62/width,dy*47/height);
++            const int dyaw=correction(dx,width,62,16), dpitch=correction(dy,height,47,10);
++            if (!seen) { committedJob.store(j.id); releaseProbe(j,false); firstFace=nowMs()-j.start; }
++            seen=true; lastFacePitch=capture.pitch; lastConfirmed.store(nowMs());
++            ESP_LOGI(tag,"confirmed face x=%d y=%d yaw=%d pitch=%d correction=%d,%d",
++                int(f.x),int(f.y),capture.yaw/10,capture.pitch/10,dyaw,dpitch);
++            if ((!dyaw && !dpitch) || fixes>=3 || error>=previousError-1) break;
++            previousError=error;
++            // A manual pose may be outside the normal conversational range.
++            // Approach it by the same bounded correction as every other pose.
++            Pose target{std::clamp(capture.yaw+dyaw*10,std::min(-900,capture.yaw),std::max(900,capture.yaw)),
++                        std::clamp(capture.pitch+dpitch*10,std::min(30,capture.pitch),std::max(600,capture.pitch))};
++            if (near(target,capture,1)) break;
++            if (!move(j,target)) break;
++            if (!firstTurn) firstTurn=nowMs()-j.start;
++            ++fixes; settle(j,target); previous={}; misses=0; edgeChecks=0; continue;
++        }
++        previous=f; previousPose=capture;
++        // Multiple unresolved faces require new voice evidence. Never pick an arbitrary bystander.
++        if (faces && !f.size) break;
++        if (faces) { misses=0; pause(15); continue; }
++        ++misses;
++        // After a wide-field miss, examine original sensor pixels. A candidate
++        // gets a second fresh frame in the same crop before any servo movement.
++        if (j.extended && !zoom) { zoom=true; pause(10); continue; }
++        zoom=false;
++        if (j.extended && misses<2) continue;
++        if (seen || !j.search) break;
++        if (search>=plan.count) {
++            // From the last front-facing view, inspect the edges at native
++            // sensor resolution without spending another turn on a missed face.
++            if (!j.extended || edgeChecks>=2 || std::abs(capture.yaw)>80) break;
++            ++edgeChecks; zoom=true; previous={}; continue;
++        }
++        const auto view=plan.views[search];
++        const Pose target{view.yaw,view.pitch};
++        if (!move(j,target,&anchor)) break;
++        if (!firstTurn) firstTurn=nowMs()-j.start;
++        ++search; misses=0; previous={};
++        ESP_LOGI(tag,"checking view at yaw=%d pitch=%d",target.yaw/10,target.pitch/10);
++        settle(j,target);
++    }
++    const bool returning=!seen && releaseProbe(j,true);
++    explicit_bzero(rgb,j.extended ? imageBytes : width*height*3);
++    Pose final{};
++    // Return movement is asynchronous. An encoder sample taken here would
++    // still describe the last probe while the head travels back to the anchor.
++    const bool measured=replyGate.accepts(j.turn) && !returning && pose(final);
++    ESP_LOGI(tag,"local check: frames=%d probes=%d confirmed=%d corrections=%d candidates=%d light=%d "
++                 "final_yaw=%d final_pitch=%d crop_frames=%d queued_ms=%u first_face_ms=%d elapsed_ms=%u "
++                 "first_turn_ms=%d rejected_frames=%d exposure_frames=%d anchor_yaw=%d anchor_pitch=%d returning=%d",
++             frames,search,int(seen),fixes,maxFaces,light,
++             measured ? final.yaw/10 : -999, measured ? final.pitch/10 : -999,zoomFrames,
++             unsigned(dequeued-j.start),firstFace ? int(firstFace) : -1,unsigned(nowMs()-j.start),
++             firstTurn ? int(firstTurn) : -1,rejected,exposureFrames,anchor.yaw/10,anchor.pitch/10,int(returning));
++}
++void work(void*)
++{
++    auto* rgb=static_cast<uint8_t*>(heap_caps_malloc(imageBytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
++    if (!rgb) { ESP_LOGE(tag,"no external camera scratch memory"); }
++    HumanFaceDetect detector;
++    ESP_LOGI(tag,"local neural detector ready; internal free=%u",unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)));
++    for (;;) {
++        ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
++        Job j{};
++        {
++            std::lock_guard<std::mutex> lock(queueMutex);
++            if (!hasJob) continue;
++            j=pending; hasJob=false; running=true;
++        }
++        if (rgb) follow(j,detector,rgb);
++        { std::lock_guard<std::mutex> lock(queueMutex); running=false; }
++    }
++}
++}
++void Prepare()
++{
++    std::lock_guard<std::mutex> lock(queueMutex);
++    if (!worker && xTaskCreateWithCaps(work,"face_center",10000,nullptr,3,&worker,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS) {
++        worker=nullptr; ESP_LOGW(tag,"neural worker unavailable");
++    }
++}
++void PauseForReply()
++{
++    replyGate.pause();
++}
++void StartListeningTurn()
++{
++    replyGate.resume();
++}
++void MotionTick()
++{
++    // Called under the existing servo lock; never queue behind inference.
++    if (!provisional.id) return;
++    if (provisional.epoch!=manualEpoch.load() || provisional.id==committedJob.load()) { provisional={}; return; }
++    if (replyGate.accepts(provisional.turn) && int32_t(nowMs()-provisional.deadline)<0) return;
++    if (!GetStackChan().motion().isModifyLocked()) drive(provisional.anchor);
++    provisional={};
++}
++void ManualOverride() {
++    manualEpoch.fetch_add(1); manualTime.store(nowMs()); lastConfirmed.store(0);
++    speaker_tracking::OnVisualMovement();
++}
++bool ConfirmedRecently(uint32_t maxAgeMs) { auto t=lastConfirmed.load(); return t && nowMs()-t<maxAgeMs; }
++bool Request(speaker_tracking::Bearing bearing, bool wake, bool search, bool explicitRequest)
++{
++    const auto now=nowMs(), last=manualTime.load();
++    if (last && now-last<5500 && !wake && !explicitRequest) return false;
++    std::lock_guard<std::mutex> lock(queueMutex);
++    const auto turn=replyGate.turn();
++    if (!worker || !replyGate.accepts(turn)) return false;
++    const auto epoch=manualEpoch.load();
++    const bool active=(running || hasJob) && pending.epoch==epoch && pending.turn==turn && now-pending.start<lifetime;
++    if (active && !wake && !explicitRequest) {
++        if (pending.extended || !speaker_tracking::replacesActiveLook(pending.bearing,pending.search,bearing,search)) return true;
++        // Upgrading a view-only check without new acoustic evidence can reuse its bearing.
++        if (!bearing.reliable) bearing=pending.bearing;
++    }
++    const auto id=latestJob.fetch_add(1)+1;
++    pending={now,epoch,id,turn,bearing,wake,search,explicitRequest};
++    hasJob=true; xTaskNotifyGive(worker);
++    return true;
++}
++}
+--- /dev/null
++++ b/main/hal/face_centering.h
+@@ -0,0 +1,11 @@
++#pragma once
++#include "speaker_tracking.h"
++namespace face_centering {
++void Prepare();
++void PauseForReply();
++void StartListeningTurn();
++bool Request(speaker_tracking::Bearing bearing, bool wake, bool search = true, bool explicitRequest = false);
++void MotionTick();
++void ManualOverride();
++bool ConfirmedRecently(uint32_t maxAgeMs=2200);
++}
+--- /dev/null
++++ b/main/hal/face_detector.h
+@@ -0,0 +1,75 @@
++#pragma once
++#include "face_aim.h"
++#include "human_face_detect.hpp"
++
++namespace face_aim {
++inline unsigned pixelLuma(const uint8_t* pixel)
++{
++    return (77*pixel[0]+150*pixel[1]+29*pixel[2]+128) >> 8;
++}
++
++struct Exposure {
++    unsigned mean;
++    bool liftedShadows;
++};
++
++inline Exposure compensateExposure(uint8_t* rgb, int inputWidth, int inputHeight)
++{
++    // A coarse sample estimates the dark pixels in a backlit view. A bounded
++    // shadow curve lifts detail while leaving the brightest parts of the frame.
++    std::array<unsigned,16> bins{};
++    unsigned sum=0, samples=0;
++    for (int y=4; y<inputHeight; y+=8) for (int x=4; x<inputWidth; x+=8) {
++        const unsigned luma=pixelLuma(rgb+3*(y*inputWidth+x));
++        ++bins[luma/16];
++        sum+=luma;
++        ++samples;
++    }
++    if (!samples) return {};
++    const unsigned mean=sum/samples;
++    unsigned quartile=0, below=0;
++    while (quartile<15 && (below+=bins[quartile])*4<samples) ++quartile;
++    if (mean>=145 || quartile>=4) return {mean,false};
++
++    const int strength=std::clamp(72-int(quartile)*16,24,72);
++    std::array<uint8_t,256> lift{};
++    for (unsigned luma=0; luma<lift.size(); ++luma) {
++        lift[luma]=uint8_t((strength*std::min(luma,64u)*(255-luma)) >> 14);
++    }
++    for (int i=0; i<inputWidth*inputHeight; ++i) {
++        auto* pixel=rgb+3*i;
++        const unsigned delta=lift[pixelLuma(pixel)];
++        for (int channel=0; channel<3; ++channel) {
++            pixel[channel]=uint8_t(std::min(255u,pixel[channel]+delta));
++        }
++    }
++    return {mean,true};
++}
++
++inline Face detect(HumanFaceDetect& detector, uint8_t* rgb, float expected, bool hasBearing, int& count,
++                   int viewX=0, int viewY=0, int viewWidth=width, int viewHeight=height,
++                   int inputWidth=width, int inputHeight=height)
++{
++    dl::image::img_t image{};
++    image.data=rgb;
++    image.width=inputWidth;
++    image.height=inputHeight;
++    image.pix_type=dl::image::DL_IMAGE_PIX_TYPE_RGB888;
++    Candidates candidates;
++    const float scaleX = static_cast<float>(viewWidth)/inputWidth;
++    const float scaleY = static_cast<float>(viewHeight)/inputHeight;
++    for (const auto& result : detector.run(image)) {
++        if (result.box.size() < 4) continue;
++        const auto& b=result.box;
++        const int w=b[2]-b[0], h=b[3]-b[1];
++        if (w<=0 || h<=0 || std::max(w,h)<10) continue;
++        // Compare acoustic direction and consecutive sightings in full-view
++        // coordinates even when the neural detector saw a native sensor crop.
++        const float x = viewX + .5f*(b[0]+b[2])*scaleX;
++        const float y = viewY + .5f*(b[1]+b[3])*scaleY;
++        candidates.add({x,y,std::max(w*scaleX,h*scaleY)},expected);
++    }
++    count=candidates.count;
++    return candidates.choose(hasBearing);
++}
++}
+--- a/main/hal/hal.cpp
++++ b/main/hal/hal.cpp
+@@ -136,6 +136,7 @@
+ /*                                   Xiaozhi                                  */
+ /* -------------------------------------------------------------------------- */
+ #include "board/hal_bridge.h"
++#include "face_centering.h"
+ #include "board/stackchan_display.h"
+ #include <board.h>
+ #include <stackchan/stackchan.h>
+@@ -152,18 +153,27 @@
+ static void _stackchan_update_task(void* param)
+ {
+     bool is_setup_done = false;
++    uint32_t last_avatar_tick = 0;
+ 
+     while (1) {
+         vTaskDelay(pdMS_TO_TICKS(20));
+ 
++        const uint32_t now = GetHAL().millis();
++        if (!hal_bridge::is_xiaozhi_idle() && now - last_avatar_tick < 120) {
++            // The servo spring integrates a 20 ms step. Keep that cadence even
++            // when the full avatar is throttled during speech processing.
++            LvglLockGuard lock;
++            face_centering::MotionTick();
++            auto& motion = GetStackChan().motion();
++            if (motion.yawServo().needsMotionTick()) motion.yawServo().update();
++            if (motion.pitchServo().needsMotionTick()) motion.pitchServo().update();
++            continue;
++        }
++        last_avatar_tick = now;
+         tools::update_reminders();
+ 
+-        if (!hal_bridge::is_xiaozhi_idle()) {
+-            vTaskDelay(pdMS_TO_TICKS(100));
+-        }
+-
+-        // Let LVGL continue rendering the face while the avatar task waits.
+         LvglLockGuard lock;
++        face_centering::MotionTick();
+         GetStackChan().update();
+ 
+         if (!hal_bridge::is_xiaozhi_ready()) {
+@@ -248,6 +258,7 @@
+ /*                                   Display                                  */
+ /* -------------------------------------------------------------------------- */
+ #include "board/hal_bridge.h"
++#include "face_centering.h"
+ 
+ void Hal::lvglLock()
+ {
+@@ -283,6 +294,7 @@
+ /*                                    Lvgl                                    */
+ /* -------------------------------------------------------------------------- */
+ #include "board/hal_bridge.h"
++#include "face_centering.h"
+ #include <stackchan/stackchan.h>
+ 
+ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+--- a/main/hal/hal_mcp.cpp
++++ b/main/hal/hal_mcp.cpp
+@@ -3,6 +3,8 @@
+  *
+  * SPDX-License-Identifier: MIT
+  */
++#include "hal/face_centering.h"
++#include "hal/speaker_tracking.h"
+ #include "hal.h"
+ #include <stdexcept>
+ #include <cJSON.h>
+@@ -63,6 +65,17 @@
+                            return result;
+                        });
+ 
++    mcp_server.AddTool("self.robot.face_speaker",
++                       "Look toward the person speaking. Runs a brief private face check on the robot. "
++                       "A requested check is not a confirmed sighting.",
++                       std::vector<Property>{}, [](const PropertyList&) -> ReturnValue {
++                           if (!face_centering::Request(speaker_tracking::RecentSpeechBearing(),false,true,true))
++                               throw std::runtime_error("Local face check is still starting");
++                           return std::string(face_centering::ConfirmedRecently()
++                               ? "A face was recently confirmed. Checking the current speaker."
++                               : "Local speaker check requested; facing is not yet confirmed.");
++                       });
++
+     mclog::tagInfo(_tag, "add robot.set_head_angles tool");
+     mcp_server.AddTool("self.robot.set_head_angles",
+                        "Adjust head position. GUIDELINES: "
+@@ -88,6 +101,7 @@
+                                if (motion.isModifyLocked()) {
+                                    throw std::runtime_error("Head can't move right now (fallen over or being shaken)");
+                                }
++                               face_centering::ManualOverride();
+                                if (pitch != -9999) {
+                                    motion.pitchServo().moveWithSpeed(pitch * 10, speed);
+                                }
+@@ -101,8 +115,18 @@
+                                    LvglLockGuard lock;
+                                    auto& motion = GetStackChan().motion();
+                                    if (motion.isModifyLocked()) throw std::runtime_error("Head movement interrupted");
+-                                   if ((yaw == -9999 || !motion.yawServo().isMoving()) &&
+-                                       (pitch == -9999 || !motion.pitchServo().isMoving())) return true;
++                                   auto reached = [](auto& servo,int degrees) {
++                                       if (degrees == -9999) return true;
++                                       const auto range = servo.getAngleLimit();
++                                       const int goal = degrees * 10;
++                                       int measured;
++                                       return goal >= range.x-30 && goal <= range.y+30 &&
++                                              servo.readMeasuredAngle(measured) && std::abs(measured-goal) <= 30;
++                                   };
++                                   if (reached(motion.yawServo(),yaw) && reached(motion.pitchServo(),pitch)) {
++                                       mclog::tagInfo(_tag, "motion set_angles: encoder confirmed");
++                                       return true;
++                                   }
+                                }
+                                vTaskDelay(pdMS_TO_TICKS(50));
+                            }
+--- a/main/hal/hal_servo.cpp
++++ b/main/hal/hal_servo.cpp
+@@ -86,20 +86,21 @@
+         _scs_bus.WritePos(_config.id, mapped_angle, 20, 0);
+     }
+ 
++    bool readMeasuredAngle(int& angle) override
++    {
++        const int raw = _scs_bus.ReadPos(_config.id);
++        if (!is_raw_pos_valid(raw)) return false;
++        angle = uitk::clamp(raw_pos_to_angle(raw), getAngleLimit().x, getAngleLimit().y);
++        return true;
++    }
++
+     int getCurrentAngle() override
+     {
+-        int current_pos = _scs_bus.ReadPos(_config.id);
+-        if (!is_raw_pos_valid(current_pos)) {
+-            int fallback_angle = uitk::clamp(Servo::getCurrentAngle(), getAngleLimit().x, getAngleLimit().y);
+-            mclog::tagWarn(_tag, "id: {} ignore invalid current pos: {}, fallback angle: {}", _config.id, current_pos,
+-                           fallback_angle);
+-            return fallback_angle;
+-        }
+-
+-        int angle = raw_pos_to_angle(current_pos);
+-        angle     = uitk::clamp(angle, getAngleLimit().x, getAngleLimit().y);
+-        // mclog::tagInfo(_tag, "id: {} current pos: {} angle: {}", _id, current_pos, angle);
+-        return angle;
++        int angle;
++        if (readMeasuredAngle(angle)) return angle;
++        const int fallback = uitk::clamp(Servo::getCurrentAngle(), getAngleLimit().x, getAngleLimit().y);
++        mclog::tagWarn(_tag, "id: {} position unavailable, fallback angle: {}", _config.id, fallback);
++        return fallback;
+     }
+ 
+     bool is_moving_impl() override
+--- /dev/null
++++ b/main/hal/speaker_bearing.h
+@@ -0,0 +1,205 @@
++#pragma once
++
++#include "speaker_tracking.h"
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++#include <cstddef>
++
++namespace speaker_tracking {
++
++constexpr size_t kWindowSamples = 480;  // 20 ms at 24 kHz
++constexpr int kMaxLag = 5;
++constexpr int kSearchLag = kMaxLag + 2;  // Detect peaks outside the microphone baseline.
++using MicWindow = std::array<int16_t, kWindowSamples>;
++
++inline Bearing EstimateBearing(const MicWindow& first, const MicWindow& second)
++{
++    std::array<float, 2 * kSearchLag + 1> scores{};
++    int best = kSearchLag;
++    float bestScore = -1;
++    for (int lag = -kSearchLag; lag <= kSearchLag; ++lag) {
++        float cross = 0, firstEnergy = 0, secondEnergy = 0;
++        for (int i = kSearchLag + 2; i < static_cast<int>(kWindowSamples) - kSearchLag; i += 2) {
++            // Two-sample difference suppresses rumble and DC offset.
++            const float a = first[i] - first[i - 2];
++            const float b = second[i + lag] - second[i + lag - 2];
++            cross += a * b;
++            firstEnergy += a * a;
++            secondEnergy += b * b;
++        }
++        constexpr float kMinEnergy = 35.f * 35.f * ((kWindowSamples - 2 * kSearchLag - 2) / 2);
++        if (std::min(firstEnergy, secondEnergy) < kMinEnergy ||
++            std::min(firstEnergy, secondEnergy) * 20.f < std::max(firstEnergy, secondEnergy)) return {};
++        const int index = lag + kSearchLag;
++        scores[index] = cross / std::sqrt(firstEnergy * secondEnergy);
++        if (scores[index] > bestScore) {
++            bestScore = scores[index];
++            best = index;
++        }
++    }
++    if (bestScore < 0.55f || std::abs(best - kSearchLag) > kMaxLag) return {};
++    for (int index = 0; index < static_cast<int>(scores.size()); ++index) {
++        if (std::abs(index - best) > 1 && scores[index] > bestScore - 0.04f) return {};
++    }
++    float lag = static_cast<float>(best - kSearchLag);
++    if (best > 0 && best + 1 < static_cast<int>(scores.size())) {
++        const float left = scores[best - 1], right = scores[best + 1];
++        const float curvature = left + right - 2 * bestScore;
++        if (curvature < -0.001f) {
++            lag += std::clamp(0.5f * (left - right) / curvature, -0.5f, 0.5f);
++        }
++    }
++    return {lag, std::abs(lag) <= kMaxLag + 0.35f};
++}
++
++// A short majority and its median reject isolated echoes, including an
++// occasional confident outlier on the same side as the speaker.
++struct LagVotes {
++    std::array<float, 16> lags{};
++    size_t count = 0;
++    void Add(float lag) {
++        if (count < lags.size()) lags[count++] = lag;
++    }
++    speaker_tracking::Bearing consensus(float deadband, unsigned minimum) const {
++        std::array<float, 16> sorted = lags;
++        std::sort(sorted.begin(), sorted.begin() + count);
++        size_t low = 0;
++        while (low < count && sorted[low] < -deadband) ++low;
++        size_t high = count;
++        while (high > 0 && sorted[high - 1] > deadband) --high;
++        const size_t positive = count - high;
++        const size_t frontal = high - low;
++        if (frontal >= minimum && 3 * frontal >= 2 * count) return {0, true};
++        const bool left = low > positive;
++        const size_t votes = left ? low : positive;
++        if (votes < minimum || 3 * votes < 2 * count) return {};
++        const size_t start = left ? 0 : high;
++        return {(sorted[start+(votes-1)/2] + sorted[start+votes/2]) * .5f, true};
++    }
++};
++
++// Near center this board and room can produce delays up to 1.2 samples.
++constexpr float kFrontalLag = 1.35f;
++constexpr int kUnknownAlignment = 99;
++
++inline bool differentDirection(float first, float second)
++{
++    // Near the end of the microphone baseline, a small delay change spans
++    // a larger angle. Require both angular separation and a measurable delay.
++    if (std::abs(first-second)<1.15f) return false;
++    auto angle=[](float lag) { return std::asin(std::clamp(lag/4.f,-1.f,1.f)); };
++    return std::abs(angle(first)-angle(second))>.38f; // about 22 degrees
++}
++
++// A view-only check can share any current camera job. Only a full search
++// can promote a check or redirect an active search to a new speaker.
++inline bool replacesActiveLook(Bearing active, bool activeSearch, Bearing incoming, bool incomingSearch)
++{
++    if (!incomingSearch) return false;
++    if (!activeSearch) return true;
++    return incoming.reliable && (!active.reliable || differentDirection(active.lag,incoming.lag));
++}
++
++enum class LookAction { None, CheckView, Search };
++
++// A short follow-up may finish between the regular 140 ms bearing checks.
++// Count captured voiced samples and evaluate when each evidence threshold is crossed.
++struct FollowupVoice {
++    static constexpr size_t directional = 13 * kWindowSamples; // 260 ms
++    static constexpr size_t unresolved = 19 * kWindowSamples;  // 380 ms
++    size_t samples = 0;
++    bool feed(size_t frames) {
++        const size_t before=samples;
++        samples=std::min(unresolved,samples+frames);
++        return (before<directional && samples>=directional) || (before<unresolved && samples>=unresolved);
++    }
++    bool enough(Bearing bearing) const { return samples>=(bearing.reliable ? directional : unresolved); }
++};
++
++// Count the 24 kHz microphone samples actually observed while listening.
++// Task pauses, loudspeaker audio and servo settling cannot stand in for silence.
++struct UtteranceRetry {
++    static constexpr size_t quietThreshold = 75 * kWindowSamples; // 1.5 s
++    static constexpr size_t clearSpeech = 16 * kWindowSamples;   // 320 ms
++    static constexpr size_t unknownSpeech = 33 * kWindowSamples; // 660 ms
++    size_t quiet = 0, voiced = 0;
++    bool armed = false, used = false;
++
++    void interrupt() { quiet=0; voiced=0; armed=false; }
++
++    void feed(bool speech, size_t samples) {
++        if (used) return;
++        if (!speech) {
++            voiced=0;
++            quiet=std::min(quiet+samples,quietThreshold);
++            if (quiet==quietThreshold) armed=true;
++        } else {
++            quiet=0;
++            if (armed) voiced=std::min(voiced+samples,unknownSpeech);
++        }
++    }
++
++    bool take(Bearing bearing) {
++        if (!armed || used || voiced<(bearing.reliable ? clearSpeech : unknownSpeech)) return false;
++        used=true;
++        return true;
++    }
++};
++
++struct SpeechLook {
++    bool checked=false, searched=false, haveBaseline=false, waitingForHint=false;
++    float baseline=0, candidate=0;
++    unsigned repeats=0;
++    uint32_t lastSearch=0;
++
++    void moved() { haveBaseline=false; waitingForHint=false; repeats=0; }
++
++    // The input task calls this at most once per 140 ms of voiced audio.
++    LookAction observe(uint32_t now, uint32_t voicedMs, Bearing b, bool recentFollowup=false,
++                       bool extendView=false) {
++        if (voicedMs<130) return LookAction::None;
++        if (!checked || (!searched && extendView)) {
++            checked=true;
++            // After a reply to a visible speaker, let the same camera job
++            // continue from its current-view check to a probe if that view is empty.
++            if (recentFollowup || extendView || (b.reliable && std::abs(b.lag)>kFrontalLag)) {
++                searched=true; haveBaseline=b.reliable; baseline=b.lag; lastSearch=now;
++                waitingForHint=!b.reliable;
++                return LookAction::Search;
++            }
++            return LookAction::CheckView;
++        }
++        if (!b.reliable) { repeats=0; return LookAction::None; }
++        if (!repeats || std::abs(b.lag-candidate)>.85f) { candidate=b.lag; repeats=1; }
++        else { candidate=.5f*(candidate+b.lag); repeats=std::min(3u,repeats+1); }
++        if (repeats<3) return LookAction::None;
++        if (!searched) {
++            // Frontal evidence permits one search if the camera's first look
++            // missed. Ambiguous noise or brief pauses cannot trigger this.
++            if (std::abs(candidate)<=kFrontalLag && voicedMs<650) return LookAction::None;
++        } else if (!haveBaseline) {
++            // A late off-axis estimate can guide the first probe until our own
++            // motor moves. After movement, establish a fresh relative baseline.
++            const bool guideFirstProbe=waitingForHint && std::abs(candidate)>kFrontalLag;
++            waitingForHint=false;
++            baseline=candidate; haveBaseline=true;
++            if (!guideFirstProbe) return LookAction::None;
++        } else if (now-lastSearch<1000 || !differentDirection(baseline,candidate)) {
++            return LookAction::None;
++        }
++        searched=true; haveBaseline=true; baseline=candidate; lastSearch=now;
++        return LookAction::Search;
++    }
++};
++
++inline int16_t conversationSample(const int16_t* slots, size_t frames, size_t frame, int alignment)
++{
++    const int first = slots[frame*4];
++    const int other = static_cast<int>(frame) + alignment;
++    if (std::abs(alignment) > kMaxLag || other < 0 || other >= static_cast<int>(frames)) return first;
++    return static_cast<int16_t>((first + slots[static_cast<size_t>(other)*4+2]) / 2);
++}
++
++}  // namespace speaker_tracking
+--- /dev/null
++++ b/main/hal/speaker_tracking.cpp
+@@ -0,0 +1,145 @@
++#include "speaker_tracking.h"
++#include "speaker_bearing.h"
++#include "face_centering.h"
++#include "application.h"
++#include <atomic>
++#include <mutex>
++#include <esp_log.h>
++#include <esp_timer.h>
++
++namespace speaker_tracking {
++namespace {
++struct Sample { uint32_t time=0; float lag=0; };
++std::array<Sample,52> history{};
++std::mutex mutex;
++size_t next=0, buffered=0;
++MicWindow left{},right{};
++std::atomic<uint32_t> motorTime{0};
++std::atomic<int> alignment{0};
++std::atomic<uint32_t> alignedAt{0};
++Sample utteranceBearing{};
++uint32_t utteranceMotorTime=0;
++uint32_t speechStart=0, lastVoiced=0, evaluated=0, observedMotor=0;
++// A reply can pass without a single microphone read. The state callback
++// publishes the latest listening turn, which the input task consumes once.
++constexpr uint32_t noNewTurn=UINT32_MAX;
++std::atomic<uint32_t> replyStarted{0}, pendingFaceWindow{noNewTurn};
++uint32_t faceWindow=0, listeningAt=0;
++uint32_t lastLook=0;
++bool inIdle=false;
++SpeechLook look;
++UtteranceRetry retry;
++FollowupVoice followupVoice;
++uint32_t nowMs() { return static_cast<uint32_t>(esp_timer_get_time()/1000); }
++Bearing recent(uint32_t now,bool wake)
++{
++    std::lock_guard<std::mutex> lock(mutex);
++    for (uint32_t age=0;age<=(wake?720u:0u);age+=120) {
++        LagVotes votes;
++        for (const auto& s:history) if (s.time && now-s.time>=age && now-s.time<=age+220) votes.Add(s.lag);
++        auto result=votes.consensus(kFrontalLag,3);
++        if (result.reliable) return result;
++    }
++    return {};
++}
++}
++void OnVisualMovement() { motorTime.store(nowMs()); }
++void OnReplyStarted() { replyStarted.store(nowMs()); }
++void OnListeningStarted(bool afterReply)
++{
++    const uint32_t duration=nowMs()-replyStarted.load();
++    pendingFaceWindow.store(afterReply ? 12000u+std::min<uint32_t>(duration,120000u) : 0u);
++}
++Bearing RecentSpeechBearing()
++{
++    const auto now=nowMs();
++    std::lock_guard<std::mutex> lock(mutex);
++    // STT arrives after endpointing and a network round trip. Use evidence
++    // from the actual voiced interval, while the head is still in that pose.
++    if (utteranceBearing.time && now-utteranceBearing.time<=6500 &&
++        utteranceMotorTime==motorTime.load()) return {utteranceBearing.lag,true};
++    return {};
++}
++int SpeechAlignment()
++{
++    auto t=alignedAt.load();
++    return t && nowMs()-t<160 ? alignment.load() : kUnknownAlignment;
++}
++void Observe(const int16_t* slots,size_t frames,uint32_t lastPlaybackMs)
++{
++    auto& app=Application::GetInstance();
++    const auto state=app.GetDeviceState();
++    const auto now=nowMs();
++    const bool idle=state==kDeviceStateIdle, listening=state==kDeviceStateListening;
++    const bool speech=listening && app.IsVoiceDetected();
++    if (idle && !inIdle) face_centering::Prepare();
++    const auto newTurn=listening ? pendingFaceWindow.exchange(noNewTurn) : noNewTurn;
++    if ((idle && !inIdle) || newTurn!=noNewTurn) {
++        look={}; retry={}; followupVoice={}; lastLook=0; speechStart=0; lastVoiced=0; buffered=0;
++        faceWindow=listening ? newTurn : 0;
++        listeningAt=now;
++        std::lock_guard<std::mutex> lock(mutex);
++        history={}; utteranceBearing={};
++    }
++    inIdle=idle;
++    if (!speech) { speechStart=0; look.repeats=0; followupVoice={}; }
++    const auto motor=motorTime.load();
++    if (motor!=observedMotor) { look.moved(); retry.interrupt(); followupVoice={}; observedMotor=motor; }
++    if ((!idle && !listening) || (lastPlaybackMs && now-lastPlaybackMs<360) || (motor && now-motor<550)) {
++        speechStart=0; look.repeats=0; retry.interrupt(); followupVoice={}; buffered=0; return;
++    }
++    if (listening && lastLook) retry.feed(speech,frames);
++    const bool followingReply=faceWindow!=0;
++    const bool newEvidence=speech && followingReply && followupVoice.feed(frames);
++    const bool viewOnly=followingReply && look.checked && !look.searched && lastLook;
++    if (speech) {
++        if (!speechStart) {
++            speechStart=now;
++            if (lastVoiced && now-lastVoiced>650) {
++                std::lock_guard<std::mutex> lock(mutex);
++                utteranceBearing={};
++            }
++        }
++        lastVoiced=now;
++    }
++    for (size_t i=0;i<frames;++i) {
++        left[buffered]=slots[4*i]; right[buffered++]=slots[4*i+2];
++        if (buffered!=left.size()) continue;
++        buffered=0;
++        auto b=EstimateBearing(left,right);
++        if (b.reliable && std::abs(b.lag)<=4.2f) {
++            std::lock_guard<std::mutex> lock(mutex);
++            history[next]={now,b.lag}; next=(next+1)%history.size();
++            alignment.store(int(std::lround(b.lag))); alignedAt.store(now);
++        }
++    }
++    if (!speech || (now-evaluated<140 && !(viewOnly && newEvidence))) return;
++    evaluated=now;
++    const Bearing b=recent(now,false);
++    if (b.reliable) {
++        std::lock_guard<std::mutex> lock(mutex);
++        utteranceBearing={now,b.lag}; utteranceMotorTime=motor;
++    }
++    auto nextRetry=retry;
++    const bool resumed=now-speechStart>=130 && nextRetry.take(b);
++    auto nextLook=resumed ? SpeechLook{} : look;
++    const bool checkMiss=resumed || (viewOnly && followupVoice.enough(b));
++    const bool missedLastLook=checkMiss && !face_centering::ConfirmedRecently(now-lastLook+1);
++    const bool recentFollowup=followingReply && now-listeningAt<12000 && !nextLook.checked &&
++                              face_centering::ConfirmedRecently(faceWindow);
++    const auto action=nextLook.observe(now,now-speechStart,b,recentFollowup,missedLastLook);
++    if (action==LookAction::None) { look=nextLook; return; }
++    const bool search=action==LookAction::Search;
++    if (!face_centering::Request(b,false,search)) return;
++    look=nextLook; retry=nextRetry; lastLook=now; retry.interrupt();
++    ESP_LOGI("SpeakerTracking","listening bearing %.2f; reliable=%d search=%d followup=%d resumed=%d voiced_ms=%u",
++             b.lag,int(b.reliable),int(search),int(recentFollowup),int(resumed),unsigned(now-speechStart));
++}
++void OnWakeWord()
++{
++    face_centering::Prepare();
++    const auto bearing=recent(nowMs(),true);
++    ESP_LOGI("SpeakerTracking","wake bearing %.2f; acquiring face",bearing.lag);
++    face_centering::Request(bearing,true);
++}
++}
+--- /dev/null
++++ b/main/hal/speaker_tracking.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <cstdint>
++#include <cstddef>
++
++namespace speaker_tracking {
++
++struct Bearing {
++    float lag = 0;     // Positive when the second microphone receives sound later.
++    bool reliable = false;
++};
++
++// Four 16-bit TDM slots. Only the two microphone slots are used for bearing.
++void Observe(const int16_t* slots, size_t frames, uint32_t lastPlaybackMs);
++void OnReplyStarted();
++void OnListeningStarted(bool afterReply);
++void OnWakeWord();
++Bearing RecentSpeechBearing();
++int SpeechAlignment();
++void OnVisualMovement();
++
++}  // namespace speaker_tracking
+--- a/main/hal/utils/wifi_connect/network_policy.h
++++ b/main/hal/utils/wifi_connect/network_policy.h
+@@ -3,6 +3,8 @@
+ #include <string>
+ #include <vector>
+ #include <cctype>
++#include <array>
++#include <cstdint>
+ 
+ namespace stackchan::wifi {
+ struct Candidate { std::string ssid; int rssi; size_t index; };
+@@ -10,10 +12,24 @@
+     std::stable_sort(candidates.begin(), candidates.end(), [&](const auto& a, const auto& b) {
+         const bool ap = !preferred.empty() && a.ssid == preferred;
+         const bool bp = !preferred.empty() && b.ssid == preferred;
+-        return ap != bp ? ap : a.rssi > b.rssi;
++        if (a.rssi != b.rssi) return a.rssi > b.rssi;
++        return ap && !bp;  // The saved preference breaks an exact RSSI tie only.
+     });
+     return candidates;
+ }
++
++struct RoamDecision {
++    using Address=std::array<uint8_t,6>;
++    Address previous{};
++    bool pending=false;
++    bool confirm(const Address& best, const Address& current, int bestRssi, int currentRssi) {
++        if (best==current || bestRssi<=currentRssi) { pending=false; return false; }
++        bool repeated=pending && previous==best;
++        previous=best;
++        pending=!repeated;
++        return repeated;
++    }
++};
+ inline bool ValidUclIdentity(const std::string& identity) {
+     const std::string suffix = "@ucl.ac.uk";
+     return identity.size() > suffix.size() && identity.size() <= 128 &&
+--- a/main/idf_component.yml
++++ b/main/idf_component.yml
+@@ -1,5 +1,7 @@
+ ## IDF Component Manager Manifest File
+ dependencies:
++  espressif/human_face_detect: "==0.2.1"
++  espressif/esp-dl: "==3.1.4"
+   waveshare/esp_lcd_sh8601: 1.0.2
+   espressif/esp_lcd_co5300: ^2.0.3
+   espressif/esp_lcd_ili9341: ==1.2.0
+--- a/main/stackchan/avatar/skins/saoirse/saoirse.cpp
++++ b/main/stackchan/avatar/skins/saoirse/saoirse.cpp
+@@ -14,6 +14,7 @@
+ constexpr uint32_t kPhosphorGreen = 0x79F75B;
+ constexpr uint32_t kDimGreen = 0x509740;
+ constexpr uint32_t kShutterDurationMs = 520;
++constexpr uint32_t kEyeFrameMs = 33;
+ 
+ void drawDisc(lv_layer_t* layer, int x, int y, int radius, uint32_t color, int border = 0)
+ {
+@@ -76,7 +77,7 @@
+         render();
+         _timer = lv_timer_create([](lv_timer_t* timer) {
+             static_cast<PhosphorEye*>(lv_timer_get_user_data(timer))->animate();
+-        }, 33, this);
++        }, kEyeFrameMs, this);
+     }
+ 
+     ~PhosphorEye() override
+@@ -97,6 +98,7 @@
+             return;
+         }
+ 
++        const bool wasDimmed = _emotion == Emotion::Sleepy;
+         _emotion = emotion;
+         setRotation(0);
+         switch (emotion) {
+@@ -108,7 +110,10 @@
+             case Emotion::Sleepy:   setWeight(0); break;
+         }
+ 
+-        lv_obj_set_style_bg_color(_block, lv_color_hex(emotion == Emotion::Sleepy ? kDimGreen : kPhosphorGreen), 0);
++        const bool dimmed = emotion == Emotion::Sleepy;
++        if (dimmed != wasDimmed) {
++            lv_obj_set_style_bg_color(_block, lv_color_hex(dimmed ? kDimGreen : kPhosphorGreen), 0);
++        }
+     }
+ 
+     Emotion getEmotion() const override { return _emotion; }
+@@ -200,14 +205,25 @@
+             return;
+         }
+ 
++        const bool doubleStep = _previous_activity == ConversationActivity::Talking;
+         if (_previous_activity != _activity) {
+             _previous_activity = _activity;
+             _activity_since = lv_tick_get();
++            lv_timer_set_period(_timer, _activity == ConversationActivity::Talking ? 2 * kEyeFrameMs : kEyeFrameMs);
+         }
+ 
+         const Pose target = targetPose();
+-        auto ease = [](float from, float to, float factor) {
+-            return std::abs(to - from) < 0.5f ? to : from + (to - from) * factor;
++        if (_pose.x == target.x && _pose.y == target.y && _pose.width == target.width &&
++            _pose.height == target.height && _pose.tilt == target.tilt) {
++            return;
++        }
++        auto ease = [doubleStep](float from, float to, float factor) {
++            if (std::abs(to - from) < 0.5f) return to;
++            // During speech only draw every second frame. Integrate both steps
++            // so blinks and expressions still reach their target at the same rate.
++            const float next = from + (to - from) * factor;
++            if (!doubleStep) return next;
++            return std::abs(to - next) < 0.5f ? to : next + (to - next) * factor;
+         };
+ 
+         // Make the downstroke snappy and give the opening a softer follow-through.
+--- a/main/stackchan/motion/servo.cpp
++++ b/main/stackchan/motion/servo.cpp
+@@ -56,13 +56,9 @@
+     }
+ 
+     // Auto release torque on rest
+-    else if (_auto_torque_release_enabled && !isMoving()) {
+-        if (GetHAL().millis() - _last_torque_check_tick > 200) {
+-            if (getTorqueEnabled()) {
+-                setTorqueEnabled(false);
+-            }
+-            _last_torque_check_tick = GetHAL().millis();
+-        }
++    else if (_auto_torque_release_enabled && _last_tick - _last_torque_check_tick > 200) {
++        _last_torque_check_tick = _last_tick;
++        if (getTorqueEnabled() && !isMoving()) setTorqueEnabled(false);
+     }
+ }
+ 
+--- a/main/stackchan/motion/servo.h
++++ b/main/stackchan/motion/servo.h
+@@ -70,6 +70,9 @@
+      */
+     virtual int getCurrentAngle();
+ 
++    // Only hardware with a successful position read can confirm a movement.
++    virtual bool readMeasuredAngle(int& angle) { (void)angle; return false; }
++
+     /**
+      * @brief
+      *
+@@ -87,6 +90,8 @@
+      * @return false
+      */
+     bool isMoving();
++
++    bool needsMotionTick() { return !_angle_anim.done() || _snap_to_target_on_rest; }
+ 
+     /**
+      * @brief
+--- a/patches/esp-wifi-connect-station.patch
++++ b/patches/esp-wifi-connect-station.patch
+@@ -1,6 +1,14 @@
+ --- a/wifi_station.cc
+ +++ b/wifi_station.cc
+-@@ -11,6 +11,10 @@
++@@ -1,6 +1,7 @@
++ #include "wifi_station.h"
++ #include <cstring>
++ #include <algorithm>
+++#include <atomic>
++ 
++ #include <freertos/FreeRTOS.h>
++ #include <freertos/event_groups.h>
++@@ -11,12 +12,28 @@
+  #include <esp_netif.h>
+  #include <esp_system.h>
+  #include "ssid_manager.h"
+@@ -11,12 +19,67 @@
+  
+  #define TAG "WifiStation"
+  #define WIFI_EVENT_CONNECTED BIT0
+-@@ -162,14 +166,22 @@
++ #define WIFI_EVENT_STOPPED BIT1
++ #define WIFI_EVENT_SCAN_DONE_BIT BIT2
++ #define MAX_RECONNECT_COUNT 5
+++extern bool stackchan_wifi_can_roam();
+++namespace {
+++constexpr int64_t surveyIntervalUs = 45LL*1000000;
+++std::atomic<bool> surveyScan{false};
+++stackchan::wifi::RoamDecision roaming;
+++bool switchingAp=false; // Accessed only by the station event loop.
+++std::array<uint8_t,6> recentlyTried{};
+++int64_t retryRoamAfter=0;
+++void scheduleScan(esp_timer_handle_t timer,int64_t after) {
+++    if (timer) { esp_timer_stop(timer); esp_timer_start_once(timer,after); }
+++}
+++}
++ 
++ WifiStation::WifiStation() {
++     // Create the event group
++@@ -76,6 +93,8 @@
++     }
++ 
++     // Now safe to stop scan, disconnect and stop WiFi (no event callbacks will fire)
+++    surveyScan.store(false);
+++    roaming={}; switchingAp=false; recentlyTried={}; retryRoamAfter=0;
++     esp_wifi_scan_stop();
++     esp_wifi_disconnect();
++     esp_wifi_stop();
++@@ -143,7 +162,20 @@
++     // Setup the timer to scan WiFi
++     esp_timer_create_args_t timer_args = {
++         .callback = [](void* arg) {
++-            esp_wifi_scan_start(nullptr, false);
+++            auto* station=static_cast<WifiStation*>(arg);
+++            if (!station->IsConnected()) {
+++                if (esp_wifi_scan_start(nullptr,false)!=ESP_OK) scheduleScan(station->timer_handle_,1000000);
+++                return;
+++            }
+++            if (!stackchan_wifi_can_roam()) { scheduleScan(station->timer_handle_,5000000); return; }
+++            wifi_scan_config_t scan{};
+++            scan.scan_time.active.max=65;
+++            scan.home_chan_dwell_time=45;
+++            surveyScan.store(true);
+++            if (esp_wifi_scan_start(&scan,false)!=ESP_OK) {
+++                surveyScan.store(false);
+++                scheduleScan(station->timer_handle_,5000000);
+++            }
++         },
++         .arg = this,
++         .dispatch_method = ESP_TIMER_TASK,
++@@ -162,23 +194,46 @@
+  }
+  
+  void WifiStation::HandleScanResult() {
+ +    // Diagnostic scans must not disrupt an established station connection.
+-+    if (IsConnected()) { esp_wifi_clear_ap_list(); return; }
+++    const bool connected=IsConnected();
+++    const bool survey=surveyScan.exchange(false);
+++    if (connected && (!survey || !stackchan_wifi_can_roam())) {
+++        esp_wifi_clear_ap_list();
+++        if (survey) scheduleScan(timer_handle_,5000000);
+++        return;
+++    }
+ +    connect_queue_.clear();
+      uint16_t ap_num = 0;
+      esp_wifi_scan_get_ap_num(&ap_num);
+@@ -28,7 +91,7 @@
+ -    std::sort(ap_records, ap_records + ap_num, [](const wifi_ap_record_t& a, const wifi_ap_record_t& b) {
+ -        return a.rssi > b.rssi;
+ -    });
+-+    // Keep the explicitly selected SSID first, strongest AP within each group.
+++    // Signal strength ranks every visible saved AP, including mesh radios.
+ +    const auto preferred = stackchan_wifi_preferred();
+ +    std::vector<stackchan::wifi::Candidate> candidates;
+ +    for (int i = 0; i < ap_num; ++i) candidates.push_back({reinterpret_cast<const char*>(ap_records[i].ssid), ap_records[i].rssi, static_cast<size_t>(i)});
+@@ -39,15 +102,61 @@
+  
+      auto& ssid_manager = SsidManager::GetInstance();
+      auto ssid_list = ssid_manager.GetSsidList();
+-@@ -219,14 +231,23 @@
+++    wifi_ap_record_t active{};
+++    const bool haveActive=connected && esp_wifi_sta_get_ap_info(&active)==ESP_OK;
+++    int currentRssi=active.rssi, bestRssi=-128;
++     for (int i = 0; i < ap_num; i++) {
++         auto ap_record = ap_records[i];
++         auto it = std::find_if(ssid_list.begin(), ssid_list.end(), [ap_record](const SsidItem& item) {
++             return strcmp((char *)ap_record.ssid, item.ssid.c_str()) == 0;
++         });
+++        if (haveActive && !memcmp(ap_record.bssid,active.bssid,6)) currentRssi=ap_record.rssi;
++         if (it != ssid_list.end()) {
+++            // A saved secured network must never match an open look-alike.
+++            if (it->ssid=="eduroam" ? ap_record.authmode!=WIFI_AUTH_WPA2_ENTERPRISE :
+++                (ap_record.authmode==WIFI_AUTH_WPA2_ENTERPRISE ||
+++                 (ap_record.authmode==WIFI_AUTH_OPEN)!=it->password.empty())) continue;
+++            if (connect_queue_.empty()) bestRssi=ap_record.rssi;
++             ESP_LOGI(TAG, "Found AP: %s, BSSID: %02x:%02x:%02x:%02x:%02x:%02x, RSSI: %d, Channel: %d, Authmode: %d",
++                 (char *)ap_record.ssid, 
++                 ap_record.bssid[0], ap_record.bssid[1], ap_record.bssid[2],
++@@ -196,6 +251,26 @@
++         }
++     }
++     free(ap_records);
+++    if (!connect_queue_.empty()) ESP_LOGI("WifiChoice","strongest saved network=%s rssi=%d channel=%d saved_radios=%u",
+++        connect_queue_.front().ssid.c_str(),bestRssi,connect_queue_.front().channel,unsigned(connect_queue_.size()));
+++    if (connected) {
+++        bool repeatSoon=false;
+++        if (haveActive && !connect_queue_.empty()) {
+++            ESP_LOGI("WifiChoice","associated network=%s rssi=%d channel=%u",active.ssid,currentRssi,active.primary);
+++            std::array<uint8_t,6> best{}, current{};
+++            memcpy(best.data(),connect_queue_.front().bssid,6); memcpy(current.data(),active.bssid,6);
+++            if (stackchan_wifi_can_roam() && (best!=recentlyTried || esp_timer_get_time()>=retryRoamAfter) &&
+++                roaming.confirm(best,current,bestRssi,currentRssi)) {
+++                switchingAp=true; recentlyTried=best; retryRoamAfter=esp_timer_get_time()+120000000;
+++                if (esp_wifi_disconnect()==ESP_OK) return;
+++                switchingAp=false;
+++            }
+++            repeatSoon=roaming.pending;
+++        } else roaming.pending=false;
+++        connect_queue_.clear();
+++        scheduleScan(timer_handle_,repeatSoon ? 5000000 : surveyIntervalUs);
+++        return;
+++    }
++ 
++     if (connect_queue_.empty()) {
++         ESP_LOGI(TAG, "No AP found, next scan in %d seconds", scan_current_interval_microseconds_ / 1000 / 1000);
++@@ -219,14 +294,23 @@
+  
+      wifi_config_t wifi_config;
+      bzero(&wifi_config, sizeof(wifi_config));
+ -    strcpy((char *)wifi_config.sta.ssid, ap_record.ssid.c_str());
+ -    strcpy((char *)wifi_config.sta.password, ap_record.password.c_str());
++-    if (remember_bssid_) {
+ +    memcpy(wifi_config.sta.ssid, ap_record.ssid.data(), std::min(ap_record.ssid.size(), sizeof(wifi_config.sta.ssid)));
+ +    memcpy(wifi_config.sta.password, ap_record.password.data(), std::min(ap_record.password.size(), sizeof(wifi_config.sta.password)));
+-     if (remember_bssid_) {
+++    { // Pin the actual radio that won the scan, including within a mesh.
+          wifi_config.sta.channel = ap_record.channel;
+          memcpy(wifi_config.sta.bssid, ap_record.bssid, 6);
+          wifi_config.sta.bssid_set = true;
+@@ -66,17 +175,38 @@
+      ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+  
+      reconnect_count_ = 0;
+-@@ -328,6 +349,13 @@
++@@ -328,7 +412,23 @@
+              this_->on_disconnected_(event->reason);
+          }
+          
+-+        // Beacon loss/no AP means the radio path changed: rescan other APs now.
+-+        if (event->reason == WIFI_REASON_BEACON_TIMEOUT || event->reason == WIFI_REASON_NO_AP_FOUND) {
++-        if (this_->reconnect_count_ < MAX_RECONNECT_COUNT) {
+++        surveyScan.store(false);
+++        roaming.pending=false;
+++        if (switchingAp && !this_->connect_queue_.empty()) {
+++            switchingAp=false;
+++            this_->StartConnect();
+++            return;
+++        }
+++        switchingAp=false;
+++        // A previously established link going away requires a fresh ranking.
+++        if (was_connected) {
+ +            this_->connect_queue_.clear();
+ +            esp_timer_stop(this_->timer_handle_);
+ +            esp_timer_start_once(this_->timer_handle_, 1000000);
+ +            return;
+ +        }
+-         if (this_->reconnect_count_ < MAX_RECONNECT_COUNT) {
+++        if (!this_->connect_queue_.empty()) { this_->StartConnect(); return; }
+++        if (this_->reconnect_count_ < 1) {
+              esp_wifi_connect();
+              this_->reconnect_count_++;
++             ESP_LOGI(TAG, "Reconnecting %s (attempt %d / %d)", this_->ssid_.c_str(), this_->reconnect_count_, MAX_RECONNECT_COUNT);
++@@ -358,6 +458,9 @@
++     ESP_LOGI(TAG, "Got IP: %s", this_->ip_address_.c_str());
++     
++     xEventGroupSetBits(this_->event_group_, WIFI_EVENT_CONNECTED);
+++    wifi_ap_record_t active{};
+++    if (esp_wifi_sta_get_ap_info(&active)==ESP_OK) ESP_LOGI("WifiChoice","connected network=%s rssi=%d channel=%u",active.ssid,active.rssi,active.primary);
+++    scheduleScan(this_->timer_handle_,surveyIntervalUs);
++     this_->was_connected_ = true;  // Mark as connected for disconnect notification
++     if (this_->on_connected_) {
++         this_->on_connected_(this_->ssid_);
+--- /dev/null
++++ b/patches/human-face-detect-msr.patch
+@@ -0,0 +1,11 @@
++--- a/human_face_detect.cpp
+++++ b/human_face_detect.cpp
++@@ -34,7 +34,7 @@
++     m_image_preprocessor = new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {1, 1, 1}, DL_IMAGE_CAP_RGB_SWAP);
++ #endif
++     m_postprocessor = new dl::detect::MSRPostprocessor(
++-        m_model, 0.5, 0.5, 10, {{8, 8, 9, 9, {{16, 16}, {32, 32}}}, {16, 16, 9, 9, {{64, 64}, {128, 128}}}});
+++        m_model, 0.25, 0.5, 10, {{8, 8, 9, 9, {{16, 16}, {32, 32}}}, {16, 16, 9, 9, {{64, 64}, {128, 128}}}});
++ }
++ 
++ MNP::MNP(const char *model_name)
+--- a/sdkconfig.defaults
++++ b/sdkconfig.defaults
+@@ -30,7 +30,7 @@
+ CONFIG_SPIRAM=y
+ CONFIG_SPIRAM_SPEED_80M=y
+ CONFIG_SPIRAM_MEMTEST=n
+-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512
++CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=32
+ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+ CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+--- a/tests/wifi_policy_test.cpp
++++ b/tests/wifi_policy_test.cpp
+@@ -4,9 +4,18 @@
+     using namespace stackchan::wifi;
+     std::vector<Candidate> aps{{"Saoirse", -30, 0}, {"ClaphamSJ", -82, 1}, {"ClaphamSJ", -58, 2}};
+     auto ordered = OrderCandidates(aps, "ClaphamSJ");
+-    assert(ordered[0].index == 2 && ordered[1].index == 1 && ordered[2].index == 0);
++    assert(ordered[0].index == 0 && ordered[1].index == 2 && ordered[2].index == 1);
+     ordered = OrderCandidates(aps, "absent");
+     assert(ordered[0].index == 0 && ordered[1].index == 2);
++    ordered=OrderCandidates({{"a",-50,0},{"b",-50,1}},"b");
++    assert(ordered[0].index==1);
++    RoamDecision roam;
++    RoamDecision::Address a{1}, b{2}, c{3};
++    assert(!roam.confirm(b,a,-53,-54));
++    assert(!roam.confirm(c,a,-51,-54));
++    assert(roam.confirm(c,a,-52,-54));
++    assert(!roam.confirm(a,a,-54,-54));
++    assert(!roam.confirm(b,a,-54,-54));
+     assert(ValidUclIdentity("abc123@ucl.ac.uk"));
+     assert(!ValidUclIdentity("abc123@example.org"));
+     assert(!ValidUclIdentity("@ucl.ac.uk"));
+--- a/xiaozhi-esp32/main/application.cc
++++ b/xiaozhi-esp32/main/application.cc
+@@ -1,4 +1,6 @@
+ #include "application.h"
++#include "hal/speaker_tracking.h"
++#include "hal/face_centering.h"
+ #include <hal/hal.h>
+ #include <apps/common/reminder/reminder.h>
+ #include "assets.h"
+@@ -100,6 +102,10 @@
+ 
+     // Add state change listeners
+     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
++        if ((new_state == kDeviceStateIdle || (new_state == kDeviceStateListening && old_state == kDeviceStateSpeaking))
++            && !speech_reception_.AcceptsAudio()) face_centering::StartListeningTurn();
++        if (new_state == kDeviceStateSpeaking) speaker_tracking::OnReplyStarted();
++        if (new_state == kDeviceStateListening) speaker_tracking::OnListeningStarted(old_state == kDeviceStateSpeaking);
+         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
+     });
+ 
+@@ -517,6 +523,13 @@
+         protocol_ = std::make_unique<MqttProtocol>();
+     }
+ 
++#if CONFIG_SEND_WAKE_WORD_DATA
++    // The companion server uses the detect event and discards wake audio.
++    // Other Xiaozhi backends can still receive their normal wake recording.
++    send_wake_recording_ = !ota_->HasWebsocketConfig() || ota_->HasMqttConfig() ||
++        Settings("companion", false).GetString("url").empty();
++#endif
++
+     protocol_->OnConnected([this]() {
+         DismissAlert();
+     });
+@@ -567,13 +580,15 @@
+                 speaking_dropped_ = 0;
+                 speaking_max_gap_ms_ = 0;
+                 last_speaking_audio_ms_.store(NowMs());
+-                speech_reception_.Start([this] { audio_service_.ResetDecoder(); });
++                speech_reception_.Start([this] { audio_service_.ResetDecoder(true); });
++                face_centering::PauseForReply();
+                 Schedule([this]() {
+                     aborted_ = false;
+                     SetDeviceState(kDeviceStateSpeaking);
+                 });
+             } else if (strcmp(state->valuestring, "stop") == 0) {
+                 speech_reception_.Stop();
++                audio_service_.ReportSpeechPlayback(speaking_packets_.load() - speaking_dropped_.load());
+                 ESP_LOGI(TAG, "Speech delivery: packets=%lu dropped=%lu max_gap_ms=%lu",
+                     static_cast<unsigned long>(speaking_packets_.load()),
+                     static_cast<unsigned long>(speaking_dropped_.load()),
+@@ -834,9 +849,12 @@
+     auto state = GetDeviceState();
+     auto wake_word = audio_service_.GetLastWakeWord();
+     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
++    if (state == kDeviceStateIdle || state == kDeviceStateListening) {
++        speaker_tracking::OnWakeWord();
++    }
+ 
+     if (state == kDeviceStateIdle) {
+-        audio_service_.EncodeWakeWord();
++        if (send_wake_recording_) audio_service_.EncodeWakeWord();
+         auto wake_word = audio_service_.GetLastWakeWord();
+ 
+         if (!protocol_->IsAudioChannelOpened()) {
+@@ -873,8 +891,9 @@
+ }
+ 
+ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+-    // Check state again in case it was changed during scheduling
+-    if (GetDeviceState() != kDeviceStateConnecting) {
++    // An already-open channel takes the direct path while the device is idle.
++    const auto state = GetDeviceState();
++    if (state != kDeviceStateConnecting && !(state == kDeviceStateIdle && protocol_->IsAudioChannelOpened())) {
+         return;
+     }
+ 
+@@ -892,22 +911,15 @@
+ 
+     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
+ #if CONFIG_SEND_WAKE_WORD_DATA
+-    // Encode and send the wake word data to the server
+-    while (auto packet = audio_service_.PopWakeWordPacket()) {
+-        protocol_->SendAudio(std::move(packet));
+-    }
+-    // Set the chat state to wake word detected
++    if (send_wake_recording_) {
++        while (auto packet = audio_service_.PopWakeWordPacket()) {
++            if (!protocol_->SendAudio(std::move(packet))) break;
++        }
++    }
+     protocol_->SendWakeWordDetected(wake_word);
+-
+-    // Set flag to play popup sound after state changes to listening
++#endif
+     play_popup_on_listening_ = true;
+     SetListeningMode(GetDefaultListeningMode());
+-#else
+-    // Set flag to play popup sound after state changes to listening
+-    // (PlaySound here would be cleared by ResetDecoder in EnableVoiceProcessing)
+-    play_popup_on_listening_ = true;
+-    SetListeningMode(GetDefaultListeningMode());
+-#endif
+ }
+ 
+ void Application::HandleStateChangedEvent() {
+@@ -1083,7 +1095,7 @@
+     auto state = GetDeviceState();
+     
+     if (state == kDeviceStateIdle) {
+-        audio_service_.EncodeWakeWord();
++        if (send_wake_recording_) audio_service_.EncodeWakeWord();
+ 
+         if (!protocol_->IsAudioChannelOpened()) {
+             SetDeviceState(kDeviceStateConnecting);
+--- a/xiaozhi-esp32/main/application.h
++++ b/xiaozhi-esp32/main/application.h
+@@ -148,6 +148,7 @@
+     std::atomic<uint32_t> speaking_dropped_{0};
+     std::atomic<uint32_t> speaking_max_gap_ms_{0};
+     bool assets_version_checked_ = false;
++    bool send_wake_recording_ = false;
+     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
+     int clock_ticks_ = 0;
+     TaskHandle_t activation_task_handle_ = nullptr;
+--- a/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -1,3 +1,5 @@
++#include <freertos/idf_additions.h>
++#include <esp_heap_caps.h>
+ #include "audio_service.h"
+ #include <esp_log.h>
+ #include <cstring>
+@@ -129,12 +131,16 @@
+     esp_timer_start_periodic(audio_power_timer_, 1000000);
+ 
+ #if CONFIG_USE_AUDIO_PROCESSOR
+-    /* Start the audio input task */
+-    xTaskCreatePinnedToCore([](void* arg) {
+-        AudioService* audio_service = (AudioService*)arg;
+-        audio_service->AudioInputTask();
+-        vTaskDelete(NULL);
+-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
++    // The WebRTC noise suppressor runs on the feed caller's stack. Keep its
++    // DSP scratch space off the internal heap needed by speaker DMA and Wi-Fi.
++    if (xTaskCreatePinnedToCoreWithCaps([](void* arg) {
++        static_cast<AudioService*>(arg)->AudioInputTask();
++        vTaskDeleteWithCaps(nullptr);
++    }, "audio_input", 24 * 1024, this, 8, &audio_input_task_handle_, 0,
++        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
++        ESP_LOGE(TAG, "Could not allocate audio input worker");
++        return;
++    }
+ 
+     /* Start the audio output task */
+     xTaskCreate([](void* arg) {
+@@ -300,6 +306,9 @@
+ 
+         auto task = std::move(audio_playback_queue_.front());
+         audio_playback_queue_.pop_front();
++        if (pcm_timing_.active && task->playback_generation == playback_generation_) {
++            RecordPcmDispatch(task->pcm.size());
++        }
+         audio_queue_cv_.notify_all();
+         lock.unlock();
+ 
+@@ -342,12 +351,14 @@
+         /* Decode the audio from decode queue */
+         if (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE) {
+             auto packet = std::move(audio_decode_queue_.front());
++            const auto generation = playback_generation_;
+             audio_decode_queue_.pop_front();
+             audio_queue_cv_.notify_all();
+             lock.unlock();
+ 
+             auto task = std::make_unique<AudioTask>();
+             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
++            task->playback_generation = generation;
+             task->timestamp = packet->timestamp;
+ 
+             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
+@@ -510,7 +521,15 @@
+     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
+         if (wait) {
++            const auto generation = playback_generation_;
++            const auto started = esp_timer_get_time();
+             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
++            if (pcm_timing_.active && playback_generation_ == generation) {
++                const auto elapsed = esp_timer_get_time() - started;
++                ++pcm_timing_.enqueue_waits;
++                pcm_timing_.enqueue_wait_us += elapsed;
++                pcm_timing_.max_enqueue_wait_us = std::max(pcm_timing_.max_enqueue_wait_us, elapsed);
++            }
+         } else {
+             return false;
+         }
+@@ -668,8 +687,53 @@
+     });
+ }
+ 
+-void AudioService::ResetDecoder() {
++void AudioService::RecordPcmDispatch(size_t samples) {
++    const auto now = esp_timer_get_time();
++    const int64_t duration = static_cast<int64_t>(samples) * 1000000 / codec_->output_sample_rate();
++    if (!pcm_timing_.frames) {
++        pcm_timing_.first_us = pcm_timing_.end_us = now;
++        ESP_LOGI(TAG, "Speech PCM first dispatch: uptime_ms=%u", static_cast<unsigned>(now / 1000));
++    }
++    // Writes can run ahead into the I2S DMA buffers. A late dispatch only
++    // represents a gap once the previously dispatched PCM would have ended.
++    if (now > pcm_timing_.end_us) {
++        const auto gap = now - pcm_timing_.end_us;
++        pcm_timing_.max_gap_us = std::max(pcm_timing_.max_gap_us, gap);
++        if (gap >= 20000) ++pcm_timing_.gaps;
++        pcm_timing_.end_us = now;
++    }
++    pcm_timing_.end_us += duration;
++    pcm_timing_.audio_us += duration;
++    ++pcm_timing_.frames;
++    if (pcm_timing_.expected && pcm_timing_.frames == pcm_timing_.expected) {
++        LogPcmTiming("tail");
++        pcm_timing_.active = false;
++    }
++}
++
++void AudioService::LogPcmTiming(const char* phase) {
++    const auto span = pcm_timing_.end_us - pcm_timing_.first_us;
++    ESP_LOGI(TAG, "Speech PCM %s: frames=%u/%u pcm_ms=%u span_ms=%u gaps_20ms=%u max_gap_ms=%u queued_opus=%u queued_pcm=%u enqueue_waits=%u enqueue_wait_ms=%u max_enqueue_wait_ms=%u",
++        phase, unsigned(pcm_timing_.frames), unsigned(pcm_timing_.expected),
++        static_cast<unsigned>(pcm_timing_.audio_us / 1000), static_cast<unsigned>(span / 1000),
++        unsigned(pcm_timing_.gaps), static_cast<unsigned>(pcm_timing_.max_gap_us / 1000),
++        unsigned(audio_decode_queue_.size()), unsigned(audio_playback_queue_.size()), unsigned(pcm_timing_.enqueue_waits),
++        static_cast<unsigned>(pcm_timing_.enqueue_wait_us / 1000), static_cast<unsigned>(pcm_timing_.max_enqueue_wait_us / 1000));
++}
++
++void AudioService::ReportSpeechPlayback(uint32_t accepted_frames) {
+     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    if (!pcm_timing_.active) return;
++    pcm_timing_.expected = accepted_frames;
++    LogPcmTiming("stop");
++    if (pcm_timing_.frames >= accepted_frames) pcm_timing_.active = false;
++}
++
++void AudioService::ResetDecoder(bool measure_speech) {
++    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    ++playback_generation_;
++    pcm_timing_ = {};
++    pcm_timing_.active = measure_speech;
+     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
+     if (opus_decoder_ != nullptr) {
+         esp_opus_dec_reset(opus_decoder_);
+--- a/xiaozhi-esp32/main/audio/audio_service.h
++++ b/xiaozhi-esp32/main/audio/audio_service.h
+@@ -1,3 +1,4 @@
++#include <atomic>
+ #ifndef AUDIO_SERVICE_H
+ #define AUDIO_SERVICE_H
+ 
+@@ -93,6 +94,7 @@
+     AudioTaskType type;
+     std::vector<int16_t> pcm;
+     uint32_t timestamp;
++    uint32_t playback_generation = 0;
+ };
+ 
+ struct DebugStatistics {
+@@ -113,7 +115,7 @@
+     void EncodeWakeWord();
+     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
+     const std::string& GetLastWakeWord() const;
+-    bool IsVoiceDetected() const { return voice_detected_; }
++    bool IsVoiceDetected() const { return voice_detected_.load(std::memory_order_relaxed); }
+     bool IsIdle();
+     void WaitForPlaybackQueueEmpty();
+     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
+@@ -131,7 +133,8 @@
+     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+     void PlaySound(const std::string_view& sound);
+     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+-    void ResetDecoder();
++    void ResetDecoder(bool measure_speech = false);
++    void ReportSpeechPlayback(uint32_t accepted_frames);
+     void SetModelsList(srmodel_list_t* models_list);
+ 
+ private:
+@@ -165,6 +168,16 @@
+     TaskHandle_t audio_output_task_handle_ = nullptr;
+     TaskHandle_t opus_codec_task_handle_ = nullptr;
+     std::mutex audio_queue_mutex_;
++    // Updated under the queue lock, for only the currently measured reply.
++    struct {
++        bool active = false;
++        uint32_t frames = 0, expected = 0, gaps = 0, enqueue_waits = 0;
++        int64_t first_us = 0, end_us = 0, audio_us = 0, max_gap_us = 0;
++        int64_t enqueue_wait_us = 0, max_enqueue_wait_us = 0;
++    } pcm_timing_;
++    uint32_t playback_generation_ = 0;
++    void RecordPcmDispatch(size_t samples);
++    void LogPcmTiming(const char* phase);
+     std::condition_variable audio_queue_cv_;
+     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
+     std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_;
+@@ -176,7 +189,7 @@
+ 
+     bool wake_word_initialized_ = false;
+     bool audio_processor_initialized_ = false;
+-    bool voice_detected_ = false;
++    std::atomic<bool> voice_detected_{false};
+     bool service_stopped_ = true;
+     bool audio_input_need_warmup_ = false;
+ 
+@@ -192,4 +205,4 @@
+     void CheckAndUpdateAudioPowerState();
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+--- a/xiaozhi-esp32/main/audio/processors/afe_audio_processor.cc
++++ b/xiaozhi-esp32/main/audio/processors/afe_audio_processor.cc
+@@ -1,5 +1,7 @@
+ #include "afe_audio_processor.h"
+ #include <esp_log.h>
++#include <esp_heap_caps.h>
++#include <freertos/idf_additions.h>
+ 
+ #define PROCESSOR_RUNNING 0x01
+ 
+@@ -39,7 +41,7 @@
+     
+     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
+     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
+-    afe_config->vad_mode = VAD_MODE_0;
++    afe_config->vad_mode = VAD_MODE_2;
+     afe_config->vad_min_noise_ms = 100;
+     if (vad_model_name != nullptr) {
+         afe_config->vad_model_name = vad_model_name;
+@@ -50,7 +52,8 @@
+         afe_config->ns_model_name = ns_model_name;
+         afe_config->afe_ns_mode = AFE_NS_MODE_NET;
+     } else {
+-        afe_config->ns_init = false;
++        afe_config->ns_init = true;
++        afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;
+     }
+ 
+     afe_config->agc_init = false;
+@@ -67,11 +70,23 @@
+     afe_iface_ = esp_afe_handle_from_config(afe_config);
+     afe_data_ = afe_iface_->create_from_config(afe_config);
+     
+-    xTaskCreate([](void* arg) {
++    afe_config_free(afe_config);
++    if (!afe_data_) {
++        ESP_LOGE(TAG, "Failed to allocate the conversation audio processor");
++        return;
++    }
++    // Full-duplex DMA and Wi-Fi require internal RAM. The conversation
++    // worker can use PSRAM, like StackChan's other long-lived sensor tasks.
++    const BaseType_t created = xTaskCreateWithCaps([](void* arg) {
+         auto this_ = (AfeAudioProcessor*)arg;
+         this_->AudioProcessorTask();
+-        vTaskDelete(NULL);
+-    }, "audio_communication", 4096, this, 3, NULL);
++        vTaskDeleteWithCaps(nullptr);
++    }, "audio_communication", 4096, this, 5, nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
++    if (created != pdPASS) {
++        ESP_LOGE(TAG, "Failed to start the conversation audio processor");
++        afe_iface_->destroy(afe_data_);
++        afe_data_ = nullptr;
++    }
+ }
+ 
+ AfeAudioProcessor::~AfeAudioProcessor() {
+@@ -133,6 +148,7 @@
+ }
+ 
+ void AfeAudioProcessor::AudioProcessorTask() {
++    bool firstFrame = true;
+     auto fetch_size = afe_iface_->get_fetch_chunksize(afe_data_);
+     auto feed_size = afe_iface_->get_feed_chunksize(afe_data_);
+     ESP_LOGI(TAG, "Audio communication task started, feed size: %d fetch size: %d",
+@@ -150,6 +166,11 @@
+                 ESP_LOGI(TAG, "Error code: %d", res->ret_value);
+             }
+             continue;
++        }
++
++        if (firstFrame) {
++            ESP_LOGI(TAG, "Conversation capture received its first processed frame");
++            firstFrame = false;
+         }
+ 
+         // VAD state change
+--- a/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -70,9 +70,11 @@
+     for (int i = 0; i < ref_num; i++) {
+         input_format.push_back('R');
+     }
+-    afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
++    // Wake detection also runs over reply playback. Use the recognition AEC
++    // on the same reference channel while leaving CPU time for the speaker.
++    afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_LOW_COST);
+     afe_config->aec_init = codec_->input_reference();
+-    afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
++    afe_config->aec_mode = AEC_MODE_SR_LOW_COST;
+     afe_config->afe_perferred_core = 1;
+     afe_config->afe_perferred_priority = 1;
+     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
+--- a/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -8,6 +8,9 @@
+ #include <cJSON.h>
+ #include <esp_log.h>
+ #include <arpa/inet.h>
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STACK_CHAN
++#include <freertos/task.h>
++#endif
+ #include "assets/lang_config.h"
+ 
+ #define TAG "WS"
+@@ -227,10 +230,23 @@
+ 
+ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
+     auto transport = cJSON_GetObjectItem(root, "transport");
+-    if (transport == nullptr || strcmp(transport->valuestring, "websocket") != 0) {
+-        ESP_LOGE(TAG, "Unsupported transport: %s", transport->valuestring);
++    if (!cJSON_IsString(transport) || strcmp(transport->valuestring, "websocket") != 0) {
++        ESP_LOGE(TAG, "Unsupported WebSocket hello transport");
+         return;
+     }
++
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STACK_CHAN
++    // Both ESP socket implementations invoke this callback on the connection's
++    // own reader. A cellular backend may dispatch on a shared modem worker.
++    // The reader feeds the priority-5 decoder while WakeNet and LVGL run at 3.
++    constexpr UBaseType_t voice_reader_priority = 4;
++    const char* reader = pcTaskGetName(nullptr);
++    if ((strcmp(reader, "ssl_receive") == 0 || strcmp(reader, "tcp_receive") == 0) &&
++        uxTaskPriorityGet(nullptr) < voice_reader_priority) {
++        vTaskPrioritySet(nullptr, voice_reader_priority);
++        ESP_LOGI(TAG, "Voice reader %s priority=%u", reader, unsigned(uxTaskPriorityGet(nullptr)));
++    }
++#endif
+ 
+     auto session_id = cJSON_GetObjectItem(root, "session_id");
+     if (cJSON_IsString(session_id)) {

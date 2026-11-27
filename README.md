@@ -30,3 +30,7 @@ Thank you to the contributors of the StackChan community, especially:
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [@stack_chan](https://x.com/stack_chan)                                          | [@mongonta555](https://x.com/mongonta555)                                   |
 | Shinya Ishikawa                                                                  | Takao Akaki                                                                 |
+
+## Saoirse companion
+
+See the [Saoirse companion guide](companion/README.md) for the iPhone app, relay deployment, and CoreS3 firmware build.

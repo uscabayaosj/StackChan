@@ -1,0 +1,37 @@
+{
+  "name": "saoirse-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node out/scripts/dev.js",
+    "build": "tsc -p tsconfig.relay.json",
+    "dev": "tsx scripts/dev.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "fake-robot": "tsx scripts/fake-robot.ts"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "@neondatabase/serverless": "^1.2.1",
+    "@vercel/functions": "^3.11.4",
+    "@xmldom/xmldom": "0.9.12",
+    "ical.js": "2.2.1",
+    "opusscript": "^0.1.1",
+    "ws": "^8.22.0"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "@vercel/node": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
