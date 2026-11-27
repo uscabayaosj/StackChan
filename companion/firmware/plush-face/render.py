@@ -7,7 +7,9 @@ from pathlib import Path
 import struct
 import zlib
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+from render_giggle import BEATS, DURATION_MS
 
 
 SIZE = (320, 240)
@@ -16,6 +18,8 @@ HEAD = (20, 2, 300, 184)
 EYES = (106, 88, 214, 128)
 MOUTH = (140, 116, 180, 146)
 MIC = (104, 145, 152, 175)
+CHEEK = (92, 116, 136, 148)
+HEART = (260, 50, 308, 98)
 
 
 def smooth(t):
@@ -71,6 +75,68 @@ def rgb565(image):
                     for r, g, b in image.getdata())
 
 
+def blush():
+    tile = Image.new("RGBA", (44, 32))
+    tile.putdata([
+        (243, 82, 114, round(162 * smooth(1 - math.hypot((x - 22) / 22, (y - 16) / 16)) ** 1.3))
+        for y in range(32) for x in range(44)
+    ])
+    return tile
+
+
+def glazed_heart():
+    # Shade a rounded extrusion using a height map, then downsample the silhouette and highlights.
+    size = 144
+    mask = Image.new("L", (size, size))
+    path = []
+    for i in range(360):
+        t = math.radians(i)
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
+        path.append((int(71 + 3.65 * x), int(61 - 3.72 * y)))
+    ImageDraw.Draw(mask).polygon(path, fill=255)
+    height = mask.filter(ImageFilter.GaussianBlur(13)).load()
+    silhouette = mask.load()
+    heart = Image.new("RGBA", (size, size))
+    rgba = heart.load()
+    for y in range(2, size - 2):
+        for x in range(2, size - 2):
+            if not silhouette[x, y]:
+                continue
+            dx = (height[x + 1, y] - height[x - 1, y]) / 40
+            dy = (height[x, y + 1] - height[x, y - 1]) / 40
+            nz = 1 / math.sqrt(dx * dx + dy * dy + 1)
+            diffuse = max(0, nz * (0.41 * dx + 0.55 * dy + 0.72))
+            specular = max(0, nz * (0.26 * dx + 0.35 * dy + 0.90)) ** 25
+            top_glint = math.exp(-(((x - 46) / 13) ** 2 + ((y - 36) / 9) ** 2))
+            light = min(1, 0.85 * diffuse + 0.4 * specular + 0.53 * top_glint)
+            rgba[x, y] = (round(151 + 104 * light), round(17 + 155 * light), round(46 + 142 * light), 255)
+
+    shadow = Image.new("RGBA", heart.size, (54, 6, 25))
+    offset = Image.new("L", heart.size)
+    offset.paste(mask, (1, 6))
+    shadow.putalpha(offset.filter(ImageFilter.GaussianBlur(5)).point(lambda v: v * 3 // 5))
+    return Image.alpha_composite(shadow, heart).resize((48, 48), Image.Resampling.LANCZOS)
+
+
+def delighted_eyes(blink):
+    delighted = blink.copy()
+    ink = (55, 31, 20)
+    for x0, y0, x1, y1 in ((108, 104, 138, 123), (181, 104, 211, 123)):
+        for x in range(x0, x1):
+            top, bottom = blink.getpixel((x, y0)), blink.getpixel((x, y1))
+            skin = [tuple(round(t + (b - t) * (y - y0) / (y1 - y0)) for t, b in zip(top, bottom))
+                    for y in range(y0, y1)]
+            pixels = [blink.getpixel((x, y)) for y in range(y0, y1)]
+            # Remove the closed lids, then flip only the drawn curves. The peach shading stays in place.
+            alpha = [max(0, min(1, (b[0] - p[0] - 10) / max(1, b[0] - ink[0] - 10)))
+                     for p, b in zip(pixels, skin)]
+            for y, (pixel, tone, lid, smile) in enumerate(zip(pixels, skin, alpha, reversed(alpha)), y0):
+                clean = tone if lid > 0 else pixel
+                delighted.putpixel((x, y), tuple(round(b + smile * (a - b)) for a, b in zip(ink, clean)))
+    return delighted
+
+
 def render(atlas):
     if atlas.size != (2 * SIZE[0], 2 * SIZE[1]):
         raise ValueError("Expected a 640 × 480 contact sheet in standby/speaking/blink/thinking order")
@@ -96,6 +162,11 @@ def render(atlas):
     draw = ImageDraw.Draw(angry)
     draw.line([(114, 101), (128, 106)], fill=(92, 53, 32), width=2)
     draw.line([(191, 106), (205, 101)], fill=(92, 53, 32), width=2)
+    delighted = delighted_eyes(blink)
+    rose = Image.new("RGBA", SIZE)
+    rose.paste(blush(), CHEEK[:2])
+    love = Image.new("RGBA", SIZE)
+    love.paste(glazed_heart(), HEART[:2])
 
     return [
         ("Background", BOUNDS, base),
@@ -115,6 +186,10 @@ def render(atlas):
         ("LowMic", MIC, reply_pose(glow(base, 127, 158, 19, 14, 0.34))),
         ("MediumMic", MIC, reply_pose(glow(base, 127, 158, 19, 14, 0.78))),
         ("BrightMic", MIC, reply_pose(glow(base, 127, 158, 19, 14, 1.0))),
+        ("GiggleEyes", EYES, masked_tile(base, delighted, EYES, 5)),
+        ("GiggleMouth", MOUTH, masked_tile(base, speaking, MOUTH, 7)),
+        ("PetBlush", CHEEK, rose),
+        ("PetHeart", HEART, love),
     ]
 
 
@@ -124,8 +199,15 @@ def main():
     args = parser.parse_args()
     frames = render(Image.open(Path(__file__).with_name("source.png")).convert("RGB"))
     data = bytearray()
-    for _, box, image in frames:
-        data.extend(rgb565(image.crop(box)))
+    manifest = []
+    for name, box, image in frames:
+        tile = image.crop(box)
+        has_alpha = tile.mode == "RGBA"
+        manifest.append((name, box, len(data), has_alpha))
+        data.extend(rgb565(tile.convert("RGB")))
+        if has_alpha:
+            data.extend(tile.getchannel("A").tobytes())
+        data.extend(b"\0" * (-len(data) % 16))
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "saoirse_plush.bin").write_bytes(zlib.compress(data, level=9))
 
@@ -134,13 +216,22 @@ def main():
              "enum Frame {", "    Hidden = -1,"]
     lines.extend(f"    {name}," for name, _, _ in frames)
     lines.extend(["    FrameCount,", "};", "", "struct Tile {", "    uint16_t x, y, width, height;",
-                  "    size_t offset;", "};", "", "inline constexpr Tile kTiles[FrameCount] = {"])
-    offset = 0
-    for name, (x, y, right, bottom), _ in frames:
+                  "    size_t offset;", "    bool hasAlpha;", "};", "", "inline constexpr Tile kTiles[FrameCount] = {"])
+    for name, (x, y, right, bottom), offset, has_alpha in manifest:
         width, height = right - x, bottom - y
-        lines.append(f"    {{{x}, {y}, {width}, {height}, {offset}}},  // {name}")
-        offset += width * height * 2
-    lines.extend(["};", f"inline constexpr size_t kPixelBytes = {offset};", "", "}  // namespace stackchan::avatar::plush", ""])
+        lines.append(f"    {{{x}, {y}, {width}, {height}, {offset}, {str(has_alpha).lower()}}},  // {name}")
+    # Match the face's timing to the three vocal bursts, with a small allowance for speaker startup.
+    step_ms = 66
+    openings = []
+    for ms in range(0, DURATION_MS, step_ms):
+        phase = [max(0, min(1, (ms + step_ms / 2 - onset - 25) / duration)) for onset, duration, _, _ in BEATS]
+        strength = max(math.sin(math.pi * t) ** 1.75 for t in phase)
+        openings.append("GiggleMouth" if strength > 0.64 else "Smile" if strength > 0.21 else "Hidden")
+    lines.extend(["};", f"inline constexpr size_t kPixelBytes = {len(data)};", "",
+                  f"inline constexpr uint32_t kGiggleAudioMs = {DURATION_MS};",
+                  f"inline constexpr uint32_t kFrameMs = {step_ms};",
+                  "inline constexpr Frame kGiggleMouths[] = {" + ", ".join(openings) + "};", "",
+                  "}  // namespace stackchan::avatar::plush", ""])
     (args.output / "plush_frames.h").write_text("\n".join(lines))
 
 
